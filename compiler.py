@@ -150,8 +150,8 @@ def compile(loma_code : str,
 #include <math.h>
         \n""" + code
 
-        print('Generated C code:')
-        print(code)
+        # print('Generated C code:')
+        # print(code)
 
         if platform.system() == 'Windows':
             tmp_c_filename = f'_tmp.c'
