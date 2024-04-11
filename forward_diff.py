@@ -3,6 +3,7 @@ ir.generate_asdl_file()
 import _asdl.loma as loma_ir
 import irmutator
 import autodiff
+import inspect  # inspect.stack()[0][3] get function name
 
 def forward_diff(diff_func_id : str,
                  structs : dict[str, loma_ir.Struct],
@@ -64,20 +65,34 @@ def forward_diff(diff_func_id : str,
                 diff_func_id, d_args, new_body, node.is_simd, d_ret_type, lineno = node.lineno)
 
         def mutate_return(self, node):
-            # HW1: TODO
-            return super().mutate_return(node)
+            val, dval = super().mutate_expr(node.val)
+            return loma_ir.Return(
+                loma_ir.Call(
+                    'make__dfloat', 
+                    [val, dval]
+                ),
+                lineno = node.lineno)
 
         def mutate_declare(self, node):
+            # optional expression
+            opt_expr = loma_ir.Call(
+                'make__dfloat', 
+                self.mutate_expr(node.val)
+            ) if (node.val is not None) else None
             return loma_ir.Declare(
                 node.target,
                 autodiff.type_to_diff_type(diff_structs, node.t),
-                self.mutate_expr(node.val) if node.val is not None else None,
+                opt_expr,
                 lineno = node.lineno)
 
         def mutate_assign(self, node):
+            assert (node.val is not None)
+            # right-hand-side expression
+            val, dval = self.mutate_expr(node.val)
+            rhs_expr = loma_ir.Call('make__dfloat', [val, dval])
             return loma_ir.Assign(
-                self.mutate_expr(node.target),
-                self.mutate_expr(node.val),
+                node.target,
+                rhs_expr,
                 lineno = node.lineno)
 
         def mutate_ifelse(self, node):
@@ -91,17 +106,18 @@ def forward_diff(diff_func_id : str,
         """2.0 -> make__dfloat(2.0, 0.0)
         """
         def mutate_const_float(self, node):
-            return loma_ir.Call(
-                'make__dfloat', 
-                [node, loma_ir.ConstFloat(0.0)]
-            )
+            # return loma_ir.Call(
+            #     'make__dfloat', 
+            #     [node, loma_ir.ConstFloat(0.0)]
+            # )
+            return node, loma_ir.ConstFloat(0.0)
 
         def mutate_const_int(self, node):
             # HW1: TODO
             return super().mutate_const_int(node)
 
         def mutate_var(self, node):
-            return node
+            return loma_ir.StructAccess(node, 'val'), loma_ir.StructAccess(node, 'dval')
 
         def mutate_array_access(self, node):
             # HW1: TODO
@@ -118,11 +134,7 @@ def forward_diff(diff_func_id : str,
             # construct "x.val + y.val" and "x.dval + y.dval"
             val = loma_ir.BinaryOp(loma_ir.Add(), lval, rval)
             dval = loma_ir.BinaryOp(loma_ir.Add(), ldval, rdval)
-            # make 
-            return loma_ir.Call(
-                'make__dfloat', 
-                [val, dval]
-            )
+            return val, dval
 
         """x-y -> make__dfloat(x.val - y.val, x.dval - y.dval)
         """
@@ -131,11 +143,7 @@ def forward_diff(diff_func_id : str,
             # construct "x.val - y.val" and "x.dval - y.dval"
             val = loma_ir.BinaryOp(loma_ir.Sub(), lval, rval)
             dval = loma_ir.BinaryOp(loma_ir.Sub(), ldval, rdval)
-            # make 
-            return loma_ir.Call(
-                'make__dfloat', 
-                [val, dval]
-            )
+            return val, dval
 
         """x*y -> make__dfloat(x.val * y.val, x.dval * y.val + x.val * y.dval)
         """
@@ -148,11 +156,7 @@ def forward_diff(diff_func_id : str,
                 loma_ir.BinaryOp(loma_ir.Mul(), ldval, rval), 
                 loma_ir.BinaryOp(loma_ir.Mul(), lval, rdval)
             )
-            # make 
-            return loma_ir.Call(
-                'make__dfloat', 
-                [val, dval]
-            )
+            return val, dval
 
         """x/y -> make__dfloat(x.val / y.val, (x.dval * y.val - x.val * y.dval)/(y.val * y.val) )
         """
@@ -172,11 +176,7 @@ def forward_diff(diff_func_id : str,
                 numerator, 
                 denom
             )
-            # make 
-            return loma_ir.Call(
-                'make__dfloat', 
-                [val, dval]
-            )
+            return val, dval
 
         """handle intrinsic function calls (sin, exp, etc.)
         and let others pass by.
@@ -186,8 +186,7 @@ def forward_diff(diff_func_id : str,
             # (pow has 2) we call it x (and y)
             if len(node.args) == 0:
                 return super().mutate_call(node)
-            x = self.mutate_expr(node.args[0])
-            x_val, x_dval = loma_ir.StructAccess(x, 'val'), loma_ir.StructAccess(x, 'dval')
+            x_val, x_dval = self.mutate_expr(node.args[0])
             # for returned d_float
             val = loma_ir.Call(node.id, [x_val]) if node.id != "pow" else None
             dval = None  # to be filled in swtich
@@ -218,9 +217,7 @@ def forward_diff(diff_func_id : str,
                     )  # (0.5 / sqrt(x)) * x_dval
                 case "pow":
                     assert len(node.args) == 2, "pow() should have 2 args"
-                    y = self.mutate_expr(node.args[1])
-                    y_val = loma_ir.StructAccess(y, 'val')
-                    y_dval = loma_ir.StructAccess(y, 'dval')
+                    y_val, y_dval = self.mutate_expr(node.args[1])
                     # d/dx(x^y) = y * x^(y-1)
                     # d/dy(x^y) = x^y * log(x)
                     partial_x = loma_ir.BinaryOp(
@@ -285,23 +282,15 @@ def forward_diff(diff_func_id : str,
                     # non-intrinsic function with >=0 args
                     return super().mutate_call(node)
             # return for the intrinsic
-            return loma_ir.Call(
-                'make__dfloat', 
-                [val, dval]
-            )
+            return val, dval
 
         """helper function that extract the val and dval for
         the 2 operands in a binary op
         """
         def extract_binary_val_dval(self, node):
             # get x and y
-            left = self.mutate_expr(node.left)
-            right = self.mutate_expr(node.right)
-            # and their val and dval attributes
-            lval = loma_ir.StructAccess(left, 'val')
-            rval = loma_ir.StructAccess(right, 'val')
-            ldval = loma_ir.StructAccess(left, 'dval')
-            rdval = loma_ir.StructAccess(right, 'dval')
+            lval, ldval = self.mutate_expr(node.left)
+            rval, rdval = self.mutate_expr(node.right)
             return (lval, rval, ldval, rdval)
 
     return FwdDiffMutator().mutate_function_def(func)
