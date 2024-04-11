@@ -66,19 +66,38 @@ def forward_diff(diff_func_id : str,
 
         def mutate_return(self, node):
             val, dval = super().mutate_expr(node.val)
-            return loma_ir.Return(
-                loma_ir.Call(
-                    'make__dfloat', 
-                    [val, dval]
-                ),
-                lineno = node.lineno)
+            ret_expr = None
+            match node.val.t:
+                case loma_ir.Float():
+                    ret_expr = loma_ir.Call(
+                        'make__dfloat', 
+                        [val, dval]
+                    )
+                case loma_ir.Int():
+                    ret_expr = val
+                case loma_ir.Array():
+                    pass
+                case _:
+                    pass
+            
+            return loma_ir.Return(ret_expr, lineno = node.lineno)
 
         def mutate_declare(self, node):
             # optional expression
-            opt_expr = loma_ir.Call(
-                'make__dfloat', 
-                self.mutate_expr(node.val)
-            ) if (node.val is not None) else None
+            opt_expr = None
+            if node.val is not None:
+                match node.val.t:
+                    case loma_ir.Float():
+                        opt_expr = loma_ir.Call(
+                            'make__dfloat', 
+                            self.mutate_expr(node.val)
+                        )
+                    case loma_ir.Int():
+                        opt_expr = node.val
+                    case loma_ir.Array():
+                        pass
+                    case _:
+                        pass
             return loma_ir.Declare(
                 node.target,
                 autodiff.type_to_diff_type(diff_structs, node.t),
@@ -89,7 +108,19 @@ def forward_diff(diff_func_id : str,
             assert (node.val is not None)
             # right-hand-side expression
             val, dval = self.mutate_expr(node.val)
-            rhs_expr = loma_ir.Call('make__dfloat', [val, dval])
+            rhs_expr = None
+            match node.val.t:
+                case loma_ir.Float():
+                    rhs_expr = loma_ir.Call(
+                        'make__dfloat', 
+                        self.mutate_expr(node.val)
+                    )
+                case loma_ir.Int():
+                    rhs_expr = node.val
+                case loma_ir.Array():
+                    pass
+                case _:
+                    pass
             return loma_ir.Assign(
                 node.target,
                 rhs_expr,
@@ -106,18 +137,21 @@ def forward_diff(diff_func_id : str,
         """2.0 -> make__dfloat(2.0, 0.0)
         """
         def mutate_const_float(self, node):
-            # return loma_ir.Call(
-            #     'make__dfloat', 
-            #     [node, loma_ir.ConstFloat(0.0)]
-            # )
             return node, loma_ir.ConstFloat(0.0)
 
         def mutate_const_int(self, node):
-            # HW1: TODO
-            return super().mutate_const_int(node)
+            return node, loma_ir.ConstFloat(0.0)
 
         def mutate_var(self, node):
-            return loma_ir.StructAccess(node, 'val'), loma_ir.StructAccess(node, 'dval')
+            match node.t:
+                case loma_ir.Int():
+                    return node, loma_ir.ConstFloat(0.0)
+                case loma_ir.Float():
+                    return loma_ir.StructAccess(node, 'val'), loma_ir.StructAccess(node, 'dval')
+                case loma_ir.Array():
+                    pass
+                case _:
+                    pass
 
         def mutate_array_access(self, node):
             # HW1: TODO
@@ -278,6 +312,10 @@ def forward_diff(diff_func_id : str,
                         ),
                         x_dval
                     )  # (1 / x) * x_dval
+                case "int2float":
+                    dval = loma_ir.ConstFloat(0.0)
+                case "float2int":
+                    dval = loma_ir.ConstFloat(0.0)
                 case _:
                     # non-intrinsic function with >=0 args
                     return super().mutate_call(node)
