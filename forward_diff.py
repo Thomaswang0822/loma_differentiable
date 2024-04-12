@@ -3,7 +3,8 @@ ir.generate_asdl_file()
 import _asdl.loma as loma_ir
 import irmutator
 import autodiff
-import inspect  # inspect.stack()[0][3] get function name
+# get function name: print(f"{inspect.stack()[0][3]} Check node {node}")
+import inspect
 
 def forward_diff(diff_func_id : str,
                  structs : dict[str, loma_ir.Struct],
@@ -106,8 +107,19 @@ def forward_diff(diff_func_id : str,
 
         def mutate_assign(self, node):
             assert (node.val is not None)
-            # right-hand-side expression
             val, dval = self.mutate_expr(node.val)
+            # lhs need special handle for array access:
+            #   y[float2int(j)] -> y[float2int((j).val)], but not y[float2int((j).val)].val
+            target = node.target
+            if isinstance(node.target, loma_ir.ArrayAccess):
+                # mutate index
+                idx, _ = self.mutate_expr(node.target.index)
+                target = loma_ir.ArrayAccess(
+                    node.target.array,
+                    idx,
+                    lineno = node.lineno,
+                    t = node.target.t)
+            # right-hand-side expression
             rhs_expr = None
             match node.val.t:
                 case loma_ir.Float():
@@ -122,7 +134,7 @@ def forward_diff(diff_func_id : str,
                 case _:
                     pass
             return loma_ir.Assign(
-                node.target,
+                target,
                 rhs_expr,
                 lineno = node.lineno)
 
@@ -134,7 +146,7 @@ def forward_diff(diff_func_id : str,
             # HW3: TODO
             return super().mutate_while(node)
 
-        """2.0 -> make__dfloat(2.0, 0.0)
+        """2.0 -> (2.0, 0.0)
         """
         def mutate_const_float(self, node):
             return node, loma_ir.ConstFloat(0.0)
@@ -149,13 +161,28 @@ def forward_diff(diff_func_id : str,
                 case loma_ir.Float():
                     return loma_ir.StructAccess(node, 'val'), loma_ir.StructAccess(node, 'dval')
                 case loma_ir.Array():
+                    return node, loma_ir.ConstFloat(0.0)
+                case loma_ir.Struct():
                     pass
                 case _:
                     pass
 
         def mutate_array_access(self, node):
-            # HW1: TODO
-            return super().mutate_array_access(node)
+            """arr[i+j] -> (arr[i+j].val, arr[i+j].val)
+
+            Args:
+                node (_type_): _description_
+            """
+            # # index may not be trival: arr[x + 3 - 2*5]
+            idx, _ = self.mutate_expr(node.index)
+            arr, _ = self.mutate_expr(node.array)
+            # correct t is critial: arr.t is Array(), arr.t.t is Float() or sth
+            accessed_element = loma_ir.ArrayAccess(
+                arr,
+                idx,
+                lineno = node.lineno,
+                t = arr.t.t)
+            return self.mutate_var(accessed_element)
 
         def mutate_struct_access(self, node):
             # HW1: TODO
