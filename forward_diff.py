@@ -68,48 +68,38 @@ def forward_diff(diff_func_id : str,
         def mutate_return(self, node):
             val, dval = self.mutate_expr(node.val)
             ret_expr = None
-            match node.val.t:
-                case loma_ir.Float():
-                    ret_expr = loma_ir.Call(
-                        'make__dfloat', 
-                        [val, dval]
-                    )
-                case loma_ir.Int():
-                    ret_expr = val
-                case loma_ir.Array():
-                    pass
-                case loma_ir.Struct():
-                    # return foo (of type Foo) should still be
-                    # return foo (of type _dFoo)
-                    ret_expr = val
-                case _:
-                    pass
+            if isinstance(node.val.t, loma_ir.Float):
+                ret_expr = loma_ir.Call(
+                    'make__dfloat', 
+                    [val, dval]
+                )
+            elif isinstance(node.val.t, (loma_ir.Int, loma_ir.Array, loma_ir.Struct,)):
+                ret_expr = val
+            else:
+                raise TypeError("return expression has wrong type")
             
             return loma_ir.Return(ret_expr, lineno = node.lineno)
 
         def mutate_declare(self, node):
+            d_type = autodiff.type_to_diff_type(diff_structs, node.t)
+            # Note that array/struct can, but array/struct-access can't be on LHS, 
+            # so no need to mutate target (unlike mutate_assign)
+            if node.val is None:
+                return loma_ir.Declare(node.target, d_type, None, lineno = node.lineno)
             # optional expression
             opt_expr = None
-            # print(f"{inspect.stack()[0][3]} Check node.val {node.val}")
-            if node.val is not None:
-                rhs_val, rhs_dval = self.mutate_expr(node.val)
-                match node.val.t:
-                    case loma_ir.Float():
-                        opt_expr = loma_ir.Call(
-                            'make__dfloat', 
-                            [rhs_val, rhs_dval]
-                        )
-                    case loma_ir.Int():
-                        opt_expr = rhs_val
-                    case loma_ir.Struct():
-                        opt_expr = rhs_val
-                    case _:
-                        assert False, "RHS expression wrong"
-            return loma_ir.Declare(
-                node.target,
-                autodiff.type_to_diff_type(diff_structs, node.t),
-                opt_expr,
-                lineno = node.lineno)
+            rhs_val, rhs_dval = self.mutate_expr(node.val)
+            if isinstance(node.val.t, loma_ir.Float):
+                opt_expr = loma_ir.Call(
+                    'make__dfloat', 
+                    [rhs_val, rhs_dval]
+                )
+            elif isinstance(node.val.t, (loma_ir.Int, loma_ir.Array, loma_ir.Struct,)):
+                opt_expr = rhs_val
+            else:
+                raise TypeError("declared value has wrong type")
+            
+            return loma_ir.Declare(node.target, d_type, opt_expr, lineno = node.lineno)
 
         def mutate_assign(self, node):
             assert (node.val is not None)
@@ -128,24 +118,16 @@ def forward_diff(diff_func_id : str,
             # right-hand-side expression
             rhs_expr = None
             rhs_val, rhs_dval = self.mutate_expr(node.val)
-            match node.val.t:
-                case loma_ir.Float():
-                    rhs_expr = loma_ir.Call(
-                        'make__dfloat', 
-                        self.mutate_expr(node.val)
-                    )
-                case loma_ir.Int():
-                    rhs_expr = rhs_val
-                case loma_ir.Array():
-                    rhs_expr = rhs_val
-                case loma_ir.Struct():
-                    rhs_expr = rhs_val
-                case _:
-                    assert False, "RHS expression wrong"
-            return loma_ir.Assign(
-                target,
-                rhs_expr,
-                lineno = node.lineno)
+            if isinstance(node.val.t, loma_ir.Float):
+                rhs_expr = loma_ir.Call(
+                    'make__dfloat', 
+                    [val, dval]
+                )
+            elif isinstance(node.val.t, (loma_ir.Int, loma_ir.Array, loma_ir.Struct,)):
+                rhs_expr = rhs_val
+            else:
+                raise TypeError("assigned value has wrong type")
+            return loma_ir.Assign(target, rhs_expr, lineno = node.lineno)
 
         def mutate_ifelse(self, node):
             # HW3: TODO
@@ -164,17 +146,12 @@ def forward_diff(diff_func_id : str,
             return node, loma_ir.ConstFloat(0.0)
 
         def mutate_var(self, node):
-            match node.t:
-                case loma_ir.Int():
-                    return node, loma_ir.ConstFloat(0.0)
-                case loma_ir.Float():
-                    return loma_ir.StructAccess(node, 'val'), loma_ir.StructAccess(node, 'dval')
-                case loma_ir.Array():
-                    return node, loma_ir.ConstFloat(0.0)
-                case loma_ir.Struct():
-                    return node, loma_ir.ConstFloat(0.0)
-                case _:
-                    pass
+            if isinstance(node.t, loma_ir.Float):
+                return loma_ir.StructAccess(node, 'val'), loma_ir.StructAccess(node, 'dval')
+            elif isinstance(node.t, (loma_ir.Int, loma_ir.Array, loma_ir.Struct,)):
+                return node, loma_ir.ConstFloat(0.0)
+            else:
+                raise TypeError("mutate_var() node.t has wrong type")
 
         def mutate_array_access(self, node):
             """arr[i+j] -> (arr[i+j].val, arr[i+j].val)
@@ -191,25 +168,13 @@ def forward_diff(diff_func_id : str,
             return self.mutate_var(accessed_element)
 
         def mutate_struct_access(self, node):
-            """school.location.x -> (school.location.x.val, school.location.x.dval)
-            Key: need the type of its accessed member
-            - node.struct is a Var() of type Struct (school is an instance of some Struct)
-            - node.struct.t is a Struct definition (Struct type of school is Building)
-            - node.struct.t.members is a tuple/list of loma_ir.MemberDef()
             """
-            # print(f"{inspect.stack()[0][3]} Check node {node}")
-            # print(f"{inspect.stack()[0][3]} Check node.member_id {node.member_id}")
-            # members = node.struct.t.members
-            # # find the attrib t of MemberDef mdef who has attrib id == node.member_id
-            # member_type = next(mdef.t for mdef in members if mdef.id == node.member_id)
-            # print(f"{inspect.stack()[0][3]} Check members {members}")
-            # print(f"{inspect.stack()[0][3]} Check member_type {member_type}")
-            accessed_element = loma_ir.StructAccess(
-                node.struct,
-                node.member_id,
-                lineno=node.lineno,
-                t = node.t
-            )
+            Key: struct access operator (.) is followed by struct member name, which won't
+            be changed in diff code.
+            We only need to treat it like a var, e.g.
+            - school.location.x -> (school.location.x.val, school.location.x.dval)
+            - school.location (assume it has struct tupe Position) -> school.location
+            """
             return self.mutate_var(node)
 
         """x+y -> make__dfloat(x.val + y.val, x.dval + y.dval)
