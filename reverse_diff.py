@@ -82,7 +82,19 @@ def reverse_diff(diff_func_id : str,
             case _:
                 assert False
 
-    def accum_deriv(target, deriv, overwrite):
+    def accum_deriv(target: loma_ir.expr, deriv: loma_ir.expr, overwrite: bool) -> list[loma_ir.stmt]:
+        """E.g. r = x * y ->
+        accum_deriv(dx, dr*y, False) gives: dx += dr * y
+        accum_deriv(dy, dr*x, False) gives: dy += dr * x
+
+        Args:
+            target (loma_ir.expr): lhs derivative to be accumulated
+            deriv (loma_ir.expr): rhs value
+            overwrite (bool): whether dx = dr * y or dx += dr * y
+
+        Returns:
+            list[loma_ir.stmt]: list of statements depending on how many var in the primal code
+        """
         match target.t:
             case loma_ir.Int():
                 return []
@@ -192,6 +204,34 @@ def reverse_diff(diff_func_id : str,
     # HW2 happens here. Modify the following IR mutators to perform
     # reverse differentiation.
 
+    """It needs to
+    Add declare of _dx after (existing) declare of x
+    """
+    class PrimalCodeMutator(irmutator.IRMutator):
+        def mutate_stmt(self, node):
+            match node:
+                case loma_ir.Return():
+                    # hide original return
+                    return []
+                case loma_ir.Declare():
+                    return self.mutate_declare(node)
+                case loma_ir.Assign():
+                    []
+                case loma_ir.IfElse():
+                    []
+                case loma_ir.While():
+                    []
+                case loma_ir.CallStmt():
+                    []
+                case _:
+                    assert False, f'Visitor error: unhandled statement {node}'
+
+        def mutate_declare(self, node):
+            # automatically initialized to zero if no val
+            diff_declare = loma_ir.Declare('_d' + node.target, t=node.t)  
+            
+            return [node, diff_declare]
+
     # Apply the differentiation.
     class RevDiffMutator(irmutator.IRMutator):
         def mutate_function_def(self, node):
@@ -207,14 +247,15 @@ def reverse_diff(diff_func_id : str,
                     )
                     new_args.append(darg)
                 else:
-                    pass
+                    assert False, "NOT IMPLEMENTED"
             
             # _dreturn as the start point of rev diff
             if node.ret_type is not None:
                 new_args.append(loma_ir.Arg('_dreturn', node.ret_type, loma_ir.In()))
 
             # copy paste forward code
-            fwd_new_body = []
+            fwd_new_body = irmutator.flatten( [PrimalCodeMutator().mutate_stmt(stmt) for stmt in node.body] )
+            
 
             # backward diff
             rev_new_body = irmutator.flatten( [self.mutate_stmt(stmt) for stmt in reversed(node.body)] )
@@ -236,8 +277,10 @@ def reverse_diff(diff_func_id : str,
             return stmts
 
         def mutate_declare(self, node):
-            # HW2: TODO
-            return super().mutate_declare(node)
+            self.adjoint = loma_ir.Var('_d' + node.target, t=node.t)
+            stmts = self.mutate_expr(node.val)  # is a list
+            self.adjoint = None
+            return stmts
 
         def mutate_assign(self, node):
             # HW2: TODO
@@ -271,10 +314,8 @@ def reverse_diff(diff_func_id : str,
             Returns:
                 list[loma_ir.stmt]: _dx = _dx + adjoint
             """
-            dx = loma_ir.Var('_d' + node.id)
-            rhs = loma_ir.BinaryOp(loma_ir.Add(), dx, self.adjoint)
-
-            return [loma_ir.Assign(dx, rhs)]
+            dx = loma_ir.Var('_d' + node.id, lineno=node.lineno, t=node.t)
+            return accum_deriv(dx, self.adjoint, overwrite=False)
 
         def mutate_array_access(self, node):
             # HW2: TODO

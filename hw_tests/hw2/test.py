@@ -25,8 +25,8 @@ tests_to_run = [
     'test_multiply',
     'test_divide',
     'test_square',
-    # # Variable manipulation
-    # 'test_declare',
+    # Variable manipulation
+    'test_declare',
     # 'test_assign1',
     # 'test_assign2',
     # 'test_assign3',
