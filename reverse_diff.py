@@ -39,7 +39,41 @@ def reverse_diff(diff_func_id : str,
         func_to_rev - mapping from primal function ID to its reverse differentiation
     """
 
-    # Some utility functions you can use for your homework.
+    """Data structures accessed by all sub-classes"""
+    # dicts: str -> stmt
+    increment_ptr, decrement_ptr = {}, {}
+    # dict: str -> expr
+    cache_access = {}
+    # 'y', 'arr', etc if they are Out in the function args
+    output_args: set[str] = set()
+
+    def setup_cache_stmts() -> None:
+        """Store stmts and exprs to be used many times in global memory. 
+        e.g.
+        _stack_ptr_float = _stack_ptr_float + 1;
+        _t_float[_stack_ptr_float]
+        """
+        var_int_ptr = loma_ir.Var('_stack_ptr_int')
+        var_float_ptr = loma_ir.Var('_stack_ptr_float')
+        INT_ONE = loma_ir.ConstInt(1)
+        
+        increment_ptr['int'] = loma_ir.Assign(var_int_ptr, loma_ir.BinaryOp(loma_ir.Add(), var_int_ptr, INT_ONE))
+        increment_ptr['float'] = loma_ir.Assign(var_float_ptr, loma_ir.BinaryOp(loma_ir.Add(), var_float_ptr, INT_ONE))
+        decrement_ptr['int'] = loma_ir.Assign(var_int_ptr, loma_ir.BinaryOp(loma_ir.Sub(), var_int_ptr, INT_ONE))
+        decrement_ptr['float'] = loma_ir.Assign(var_float_ptr, loma_ir.BinaryOp(loma_ir.Sub(), var_float_ptr, INT_ONE))
+        
+        
+        cache_access['int'] = loma_ir.ArrayAccess(
+            loma_ir.Var("_t_int"),
+            var_int_ptr,
+            t=loma_ir.Int() )
+        cache_access['float'] = loma_ir.ArrayAccess(
+            loma_ir.Var("_t_float"),
+            var_float_ptr,
+            t=loma_ir.Float() )
+        return
+
+    # Some utility functions
     def type_to_string(t):
         match t:
             case loma_ir.Int():
@@ -129,7 +163,37 @@ def reverse_diff(diff_func_id : str,
                             stmts += accum_deriv(target_m, deriv_m, overwrite)
                 return stmts
             case _:
+                assert False, f"Must specify target.t, got: {target.t}"
+
+    def check_lhs_is_output_arg(lhs: loma_ir.expr) -> bool:
+        """If we have y : Out[float],
+        Assign to y should be skipped during the forward pass
+
+        Args:
+            lhs (loma_ir.expr): y, arr[2], student.name
+        """
+        match lhs:
+            case loma_ir.Var():
+                return lhs.id in output_args
+            case loma_ir.StructAccess():
+                return check_lhs_is_output_arg(lhs.struct, output_args)
+            case loma_ir.ArrayAccess():
+                return check_lhs_is_output_arg(lhs.array, output_args)
+            case _:
                 assert False
+    
+    def advance_stack_ptr(target: str, isIncr: bool) -> loma_ir.Assign:
+        """return an Assign stmt
+        _stack_ptr_float = _stack_ptr_float +/- 1;
+        """
+        return loma_ir.Assign(
+            target, 
+            loma_ir.BinaryOp(
+                loma_ir.Add() if isIncr else loma_ir.Sub(),
+                loma_ir.Var(target),
+                loma_ir.ConstInt(1)
+            )
+        )
 
     # A utility class that you can use for HW3.
     # This mutator normalizes each call expression into
@@ -216,52 +280,93 @@ def reverse_diff(diff_func_id : str,
                 case loma_ir.Declare():
                     return self.mutate_declare(node)
                 case loma_ir.Assign():
-                    []
+                    return self.mutate_assign(node)
                 case loma_ir.IfElse():
-                    []
+                    return []
                 case loma_ir.While():
-                    []
+                    return []
                 case loma_ir.CallStmt():
-                    []
+                    return []
                 case _:
                     assert False, f'Visitor error: unhandled statement {node}'
 
-        def mutate_declare(self, node):
+        def mutate_declare(self, node: loma_ir.Declare):
             # automatically initialized to zero if no val
             diff_declare = loma_ir.Declare('_d' + node.target, t=node.t)  
             
             return [node, diff_declare]
 
+        def mutate_assign(self, node: loma_ir.Assign) -> list[loma_ir.stmt]:
+            """z = 2.5 * x - 3.0 * y ->
+            _t_float[_stack_ptr_float] = z
+            _stack_ptr_float = _stack_ptr_float + 1
+            z = 2.5 * x - 3.0 * y
+
+            Note:
+                if z is Out nothing should happen (return [])
+                because only _dz will appear in the diff args
+
+            Args:
+                node (loma_ir.Assign)
+
+            Returns:
+                list[loma_ir.stmt]
+            """
+            # node.target is expr
+            if check_lhs_is_output_arg(node.target):
+                return []
+            type_str = type_to_string(node.target.t)
+            store_cache = loma_ir.Assign(cache_access[type_str], node.target)
+            return [store_cache, increment_ptr[type_str], node]
+
+
     # Apply the differentiation.
     class RevDiffMutator(irmutator.IRMutator):
+        """ Global class attributes to pass data around"""
+        adjoint: loma_ir.Var = None
+        # 'x' -> type of x
+        id_vars: dict[str, loma_ir.type] = {}
+        # 'x' -> Var(_adj_x)
+        tmp_adj_Vars: dict[str, loma_ir.Var] = {}
+
         def mutate_function_def(self, node):
             # HW2: TODO
             # Signature (args)
-            new_args = []
-            for arg in node.args:
-                if isinstance(arg.i, loma_ir.In):
-                    new_args.append(arg)
-                    # also _dx of x
-                    darg = loma_ir.Arg(
-                        '_d' + arg.id, arg.t, loma_ir.Out()
-                    )
-                    new_args.append(darg)
-                else:
-                    assert False, "NOT IMPLEMENTED"
+            new_args = self.process_args(node)
             
             # _dreturn as the start point of rev diff
             if node.ret_type is not None:
                 new_args.append(loma_ir.Arg('_dreturn', node.ret_type, loma_ir.In()))
 
+            # maually create first few lines to handle stack
+            # TODO: choose optimal size later
+            n = len(node.body)
+            stack_body = [
+                loma_ir.Declare(
+                    "_t_float", 
+                    t=loma_ir.Array(t=loma_ir.Float(), static_size=n)
+                ),
+                loma_ir.Declare("_stack_ptr_float", t=loma_ir.Int()),
+                loma_ir.Declare(
+                    "_t_int", 
+                    t=loma_ir.Array(t=loma_ir.Int(), static_size=n)
+                ),
+                loma_ir.Declare("_stack_ptr_int", t=loma_ir.Int())
+            ]
+            # set up reusable things
+            setup_cache_stmts()
+
             # copy paste forward code
             fwd_new_body = irmutator.flatten( [PrimalCodeMutator().mutate_stmt(stmt) for stmt in node.body] )
             
+            # populate tmp_adj_Vars and create tmp adjoint variables
+            tmp_adj_body = self.create_tmp_adjoints(node)
 
             # backward diff
             rev_new_body = irmutator.flatten( [self.mutate_stmt(stmt) for stmt in reversed(node.body)] )
 
-            body = fwd_new_body + rev_new_body
-
+            # put together everything
+            body = stack_body + fwd_new_body + tmp_adj_body + rev_new_body
             return loma_ir.FunctionDef(diff_func_id, new_args, body, node.is_simd, ret_type=None)
 
 
@@ -274,17 +379,67 @@ def reverse_diff(diff_func_id : str,
             stmts = self.mutate_expr(node.val)  # is a list
             self.adjoint = None
 
+            # 5.
+            for x, x_type in self.id_vars.items():
+                dx_Var = loma_ir.Var('_d' + x, t=x_type)
+                stmts += accum_deriv(dx_Var, self.tmp_adj_Vars[x], overwrite=False)
+                stmts.append(loma_ir.Assign(self.tmp_adj_Vars[x], loma_ir.ConstFloat(0.0)))
             return stmts
 
         def mutate_declare(self, node):
+            if node.val is None:
+                return []
             self.adjoint = loma_ir.Var('_d' + node.target, t=node.t)
             stmts = self.mutate_expr(node.val)  # is a list
             self.adjoint = None
+
+            for x, x_type in self.id_vars.items():
+                dx_Var = loma_ir.Var('_d' + x, t=x_type)
+                stmts += accum_deriv(dx_Var, self.tmp_adj_Vars[x], overwrite=False)
+                stmts.append(loma_ir.Assign(self.tmp_adj_Vars[x], loma_ir.ConstFloat(0.0)))
+            
             return stmts
 
-        def mutate_assign(self, node):
-            # HW2: TODO
-            return super().mutate_assign(node)
+        def mutate_assign(self, node: loma_ir.Assign) -> list[loma_ir.stmt]:
+            """ e.g. z = 2.5 * x - 3.0 * y
+            1. ptr--
+            2. load from cache
+            3. store to tmp adjoints (mutate_var does the job)
+            4. zero out _dz
+            5. accumulate real dval with tmp adjoints
+
+            Note:
+                only do step 3. and 5. if target is an Out
+
+            Args:
+                node (loma_ir.Assign)
+
+            Returns:
+                list[loma_ir.stmt]
+            """
+            stmts = []
+            type_str = type_to_string(node.target.t)
+            id_str = node.target.id
+            dz_Var = loma_ir.Var('_d' + id_str, t=node.target.t)
+            isOut = check_lhs_is_output_arg(node.target)
+
+            if not isOut:
+                stmts.append(decrement_ptr[type_str])  # 1.
+                stmts.append(loma_ir.Assign(node.target, cache_access[type_str]))  # 2.
+            # 3.
+            self.adjoint = dz_Var
+            stmts += self.mutate_expr(node.val)
+            self.adjoint = None
+            
+            if not isOut:
+                stmts.append(loma_ir.Assign(dz_Var, loma_ir.ConstFloat(0.0)))  # 4.
+            # 5.
+            for x, x_type in self.id_vars.items():
+                dx_Var = loma_ir.Var('_d' + x, t=x_type)
+                stmts += accum_deriv(dx_Var, self.tmp_adj_Vars[x], overwrite=False)
+                stmts.append(loma_ir.Assign(self.tmp_adj_Vars[x], loma_ir.ConstFloat(0.0))) 
+
+            return stmts
 
         def mutate_ifelse(self, node):
             # HW3: TODO
@@ -307,6 +462,8 @@ def reverse_diff(diff_func_id : str,
 
         def mutate_var(self, node: loma_ir.Var) -> list[loma_ir.stmt]:
             """ x -> _dx = _dx + adjoint
+            BUT, with back propagation, it should be
+            x -> _adj_x = _adj_x + adjoint
 
             Args:
                 node (loma_ir.Var): x
@@ -314,8 +471,14 @@ def reverse_diff(diff_func_id : str,
             Returns:
                 list[loma_ir.stmt]: _dx = _dx + adjoint
             """
-            dx = loma_ir.Var('_d' + node.id, lineno=node.lineno, t=node.t)
-            return accum_deriv(dx, self.adjoint, overwrite=False)
+            # dx = loma_ir.Var('_d' + node.id, lineno=node.lineno, t=node.t)
+            # return accum_deriv(dx, self.adjoint, overwrite=False)
+
+            # backprop version
+            assert node.id in self.tmp_adj_Vars, \
+                f"tmp_adj_Vars KeyError: {node.id}, keys :{self.tmp_adj_Vars.keys()}"
+            lhs = self.tmp_adj_Vars[node.id]
+            return accum_deriv(lhs, self.adjoint, overwrite=False)
 
         def mutate_array_access(self, node):
             # HW2: TODO
@@ -429,5 +592,55 @@ def reverse_diff(diff_func_id : str,
         def mutate_call(self, node):
             # HW2: TODO
             return super().mutate_call(node)
+
+
+        def create_tmp_adjoints(self, node: loma_ir.FunctionDef) -> list[loma_ir.Declare]:
+            """populate self.tmp_adj_Vars and create tmp adjoint variables
+
+            Args:
+                node (loma_ir.FunctionDef)
+
+            Returns:
+                list[loma_ir.Declare]
+            """
+            tmp_adj_body = []
+            ## 1. Who need tmp adjoints?
+            ## Besides for Inputs, also for local vars
+            for stmt in node.body:
+                if isinstance(stmt, loma_ir.Declare):
+                    self.id_vars[stmt.target] = stmt.t
+            ## 2. Build dict[x, Var(_adj_x)]
+            for x, x_type in self.id_vars.items():
+                self.tmp_adj_Vars[x] = loma_ir.Var(f"_adj_{x}", t=loma_ir.Float())
+                tmp_adj_body.append(
+                    loma_ir.Declare(f"_adj_{x}", t=loma_ir.Float()) )
+            # print(f"CHECK self.id_vars: {self.id_vars}")
+
+            return tmp_adj_body
+
+        def process_args(self, node: loma_ir.FunctionDef) -> list[loma_ir.Arg]:
+            new_args = []
+            for arg in node.args:
+                if isinstance(arg.i, loma_ir.In):
+                    self.id_vars[arg.id] = arg.t
+                    new_args.append(arg)
+                    # also _dx of x
+                    darg = loma_ir.Arg(
+                        '_d' + arg.id, arg.t, loma_ir.Out()
+                    )
+                    new_args.append(darg)
+                elif isinstance(arg.i, loma_ir.Out):
+                    # original var y shouldn't be there
+                    # and we don't need _adj_y
+                    darg = loma_ir.Arg(
+                        '_d' + arg.id, arg.t, loma_ir.In()
+                    )
+                    new_args.append(darg)
+                    # for primal code to skip
+                    output_args.add(arg.id)
+                else:
+                    assert False, "MUST BE IN OR OUT"
+
+            return new_args
 
     return RevDiffMutator().mutate_function_def(func)
