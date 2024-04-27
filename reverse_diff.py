@@ -371,7 +371,7 @@ def reverse_diff(diff_func_id : str,
 
 
 
-        def mutate_return(self, node):
+        def mutate_return(self, node: loma_ir.Return):
             # HW2: TODO
             # in bwd part, mutate_return should be the first to execute,
             # set global adjoint s.t. callee can use
@@ -589,9 +589,110 @@ def reverse_diff(diff_func_id : str,
 
             return left_stmt + right_stmt
 
-        def mutate_call(self, node):
-            # HW2: TODO
-            return super().mutate_call(node)
+        def mutate_call(self, node: loma_ir.Call) -> list[loma_ir.stmt]:
+            """Deal with the following intrinsic functions
+            sin(x) -> _dx += adjoint * cos(x)
+            cos(x) -> _dx += adjoint * (0 - sin(x))
+            sqrt(x) -> _dx += adjoint * (0.5 / sqrt(x))
+            pow(x, k) -> _dx += adjoint * (k * pow(x, k-1))
+                _dk += adjoint * (log(x) * pow(x, k))
+            exp(x) -> _dx += adjoint * exp(x)
+            log(x) -> _dx += adjoint * 1/x
+
+            Chain Rule:
+                log(x1 * x2) -> _dx1 += adjoint * 1/(x1*x2) * x2
+                We should pass df/d_expr to current adjoint
+
+            Note:
+                mutate_call() is called by mutate_expr(), who has setup
+                self.adjoint already.
+
+            Args:
+                node (loma_ir.Call)
+
+            Returns:
+                list[loma_ir.stmt]
+            """
+            if len(node.args) == 0:
+                assert False, "function with no arg shouldn't be here"
+            stmts = []
+            # df/d_expr (e.g. f is log(x*y), expr is x*y)
+            df_dexpr: loma_ir.expr = None
+            match node.id:
+                case "sin":
+                    df_dexpr = loma_ir.Call("cos", [node.args[0]])   
+                case "cos":
+                    df_dexpr = loma_ir.BinaryOp(
+                        loma_ir.Sub(), 
+                        loma_ir.ConstFloat(0.0), 
+                        loma_ir.Call("sin", [node.args[0]])
+                    )  # -sin(x)
+                case "sqrt":
+                    df_dexpr = loma_ir.BinaryOp(
+                        loma_ir.Div(),
+                        loma_ir.ConstFloat(0.5), 
+                        loma_ir.Call("sqrt", [node.args[0]])
+                    )  # (0.5 / sqrt(x))
+                case "pow":
+                    # extra work: need to mutate_expr() twice
+                    # will do this for k here
+                    assert len(node.args) == 2, "pow() should have 2 args"
+                    df_dk = loma_ir.BinaryOp(
+                        loma_ir.Mul(),
+                        loma_ir.Call(
+                            "log",
+                            [node.args[0]]
+                        ),  # log(x)
+                        loma_ir.Call(
+                            "pow", [
+                                node.args[0],
+                                node.args[1]
+                            ]
+                        ) # x^k
+                    ) # log(x) * pow(x, k)
+                    orig_adjoint = self.adjoint
+                    self.adjoint = loma_ir.BinaryOp(loma_ir.Mul(), self.adjoint, df_dk)
+                    stmts += self.mutate_expr(node.args[1])  # on k
+                    self.adjoint = orig_adjoint
+                    df_dexpr = loma_ir.BinaryOp(
+                        loma_ir.Mul(),
+                        node.args[1],
+                        loma_ir.Call(
+                            "pow", [
+                                node.args[0],
+                                loma_ir.BinaryOp(
+                                    loma_ir.Sub(),
+                                    node.args[1],
+                                    loma_ir.ConstFloat(1.0), 
+                                )  # k-1
+                            ]
+                        ) # pow(x, k-1)
+                    )  # k * pow(x, k-1)
+                case "exp":
+                    # just exp(x) itself
+                    df_dexpr = node
+                case "log":
+                    df_dexpr = loma_ir.BinaryOp(
+                        loma_ir.Div(),
+                        loma_ir.ConstFloat(1.0), 
+                        node.args[0]
+                    ) # 1/x
+                case "int2float":
+                    return []
+                case "float2int":
+                    return []
+                case _:
+                    # non-intrinsic function with >=0 args
+                    assert False, "non-intrinsic function with >=0 args"
+            
+            # multiply df_dexpr to adjoint and mutate_expr on x
+            curr_adjoint = self.adjoint
+            assert isinstance(df_dexpr, loma_ir.expr), f"CHECK df_dexpr: {df_dexpr}"
+            self.adjoint = loma_ir.BinaryOp(loma_ir.Mul(), self.adjoint, df_dexpr)
+            stmts += self.mutate_expr(node.args[0])  # on x
+            self.adjoint = curr_adjoint
+
+            return stmts
 
 
         def create_tmp_adjoints(self, node: loma_ir.FunctionDef) -> list[loma_ir.Declare]:

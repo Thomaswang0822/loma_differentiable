@@ -34,14 +34,14 @@ tests_to_run = [
     'test_assign5',
     'test_assign_args',
     'test_refs_out',
-    # # Math functions
-    # 'test_call_sin',
-    # 'test_call_cos',
-    # 'test_call_sqrt',
-    # 'test_call_pow',
-    # 'test_call_exp',
-    # 'test_call_log',
-    # 'test_call',
+    # Math functions
+    'test_call_sin',
+    'test_call_cos',
+    'test_call_sqrt',
+    'test_call_pow',
+    'test_call_exp',
+    'test_call_log',
+    'test_call',
     # # In & Out
     # 'test_int_input',
     # 'test_int_output',
