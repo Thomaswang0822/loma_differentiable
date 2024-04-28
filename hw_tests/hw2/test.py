@@ -53,12 +53,13 @@ tests_to_run = [
     'test_array_input_indexing',
     'test_array_output_indexing',
     'test_sum_nested_array',
-    # # Structs
-    # 'test_struct_input',
-    # 'test_struct_output',
-    # 'test_struct_declare',
-    # 'test_struct_assign',
-    # 'test_multivariate',
+    # Structs
+    'test_struct_input',
+    'test_struct_output',
+    'test_struct_declare',
+    'test_struct_assign',
+    # Final sanity check
+    'test_multivariate',
 
     'DUMMY END'
 ]

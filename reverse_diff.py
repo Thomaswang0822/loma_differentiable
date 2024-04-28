@@ -138,12 +138,6 @@ def reverse_diff(diff_func_id : str,
                 else:
                     return [loma_ir.Assign(target,
                         loma_ir.BinaryOp(loma_ir.Add(), target, deriv))]
-            # case loma_ir.Array():
-            #     if overwrite:
-            #         return [loma_ir.Assign(target, deriv)]
-            #     else:
-            #         return [loma_ir.Assign(target,
-            #             loma_ir.BinaryOp(loma_ir.Add(), target, deriv))]
             case loma_ir.Struct():
                 s = target.t
                 stmts = []
@@ -321,6 +315,8 @@ def reverse_diff(diff_func_id : str,
             # node.target is expr
             if check_lhs_is_output_arg(node.target):
                 return []
+            elif isinstance(node.target.t, loma_ir.Struct):
+                return [node]
             type_str = type_to_string(node.target.t)
             store_cache = loma_ir.Assign(cache_access[type_str], node.target)
             return [store_cache, increment_ptr[type_str], node]
@@ -350,15 +346,20 @@ def reverse_diff(diff_func_id : str,
         tmp_adj_Vars: dict[int, tuple] = {}
 
         """ mutator functions """
-        def mutate_function_def(self, node):
+        def mutate_function_def(self, node: loma_ir.FunctionDef) -> loma_ir.FunctionDef:
+            """caller of all functions below.
+            Turn a full function definition to its bwd_diff version
+
+            Args:
+                node (loma_ir.FunctionDef)
+
+            Returns:
+                loma_ir.FunctionDef
+            """
             # Signature (args)
             new_args = self.process_args(node)
             
-            # _dreturn as the start point of rev diff
-            if node.ret_type is not None:
-                new_args.append(loma_ir.Arg('_dreturn', node.ret_type, loma_ir.In()))
-
-            # maually create first few lines to handle stack
+            # cache
             # TODO: choose optimal size later
             n = len(node.body)
             stack_body = [
@@ -391,7 +392,21 @@ def reverse_diff(diff_func_id : str,
             return loma_ir.FunctionDef(diff_func_id, new_args, body, node.is_simd, ret_type=None)
 
 
-        def mutate_return(self, node: loma_ir.Return):
+        def mutate_return(self, node: loma_ir.Return) -> list[loma_ir.stmt]:
+            """similar to mutate_assign. Check its docstring
+
+            Args:
+                node (loma_ir.Return)
+
+            Returns:
+                list[loma_ir.stmt]
+            """
+            # special handle for Struct, e.g. return foo
+            if isinstance(node.val.t, loma_ir.Struct):
+                dval = loma_ir.Var('_d' + node.val.id, t=node.val.t)
+                dret = loma_ir.Var('_dreturn')
+                return accum_deriv(dval, dret, overwrite=True)
+            
             # in bwd part, mutate_return should be the first to execute,
             # set global adjoint s.t. callee can use
             # 3.
@@ -407,8 +422,21 @@ def reverse_diff(diff_func_id : str,
             return stmts
 
         def mutate_declare(self, node: loma_ir.Declare) -> list[loma_ir.stmt]:
+            """similar to mutate_assign. Check its docstring
+
+            Args:
+                node (loma_ir.Declare)
+
+            Returns:
+                list[loma_ir.stmt]
+            """
             if node.val is None:
                 return []
+            # special handle for Struct, e.g. foo : Foo = f
+            elif isinstance(node.val.t, loma_ir.Struct):
+                drhs = loma_ir.Var('_d' + node.val.id, t=node.val.t)
+                dlhs = loma_ir.Var('_d' + node.target, t=node.t)
+                return accum_deriv(drhs, dlhs, overwrite=False)
             
             # 3.
             self.adjoint = loma_ir.Var('_d' + node.target, t=node.t)
@@ -440,6 +468,13 @@ def reverse_diff(diff_func_id : str,
             Returns:
                 list[loma_ir.stmt]
             """
+            # need special handle for Struct, e.g. foo = f
+            if isinstance(node.val.t, loma_ir.Struct):
+                print(f"CHECK node.val: {node.val}")
+                drhs = loma_ir.Var('_d' + node.val.id, t=node.val.t)
+                dlhs = loma_ir.Var('_d' + node.target.id, t=node.target.t)
+                return accum_deriv(drhs, dlhs, overwrite=False)
+            
             stmts = []
             type_str = type_to_string(node.target.t)
             # lhs of assign can only be Var, ArrayAccess, or StructAccess
@@ -447,11 +482,9 @@ def reverse_diff(diff_func_id : str,
                 id_str = node.target.id
                 d_lhs = loma_ir.Var('_d' + id_str, t=node.target.t)
             elif isinstance(node.target, loma_ir.ArrayAccess):
-                id_str = node.target.array.id
-                darr = loma_ir.Var('_d' + id_str)
-                d_lhs = loma_ir.ArrayAccess(array=darr, index=node.target.index)
+                d_lhs = self.diff_array_access(node.target)
             elif isinstance(node.target, loma_ir.StructAccess):
-                assert False, "NOT IMPLEMENTED YET"
+                d_lhs = self.diff_struct_access(node.target)
             else:
                 assert False, "lhs of assign can only be Var, ArrayAccess, or StructAccess"
             isOut = check_lhs_is_output_arg(node.target)
@@ -467,7 +500,8 @@ def reverse_diff(diff_func_id : str,
             
             # 4.
             if not isOut:
-                stmts.append(loma_ir.Assign(d_lhs, loma_ir.ConstFloat(0.0)))
+                # stmts.append(loma_ir.Assign(d_lhs, loma_ir.ConstFloat(0.0)))
+                stmts += assign_zero(d_lhs)
             # 5.
             while self.i_restore < self.i_new:
                 adj, dx = self.tmp_adj_Vars[self.i_restore]
@@ -520,19 +554,28 @@ def reverse_diff(diff_func_id : str,
             return stmts
 
         def mutate_array_access(self, node: loma_ir.ArrayAccess) -> list[loma_ir.stmt]:
-            stmts = []
-            # create tmp adjoints
-            adj, dx = self.new_tmp_adjoint(node)
-            # declare adj
-            stmts += [loma_ir.Declare(adj.id, adj.t)]
-            # accumulate diff
-            stmts += accum_deriv(adj, self.adjoint, overwrite=True)
+            """see mutate_var()
+            An ArrayAccess should be treated the same
 
-            return stmts
+            Args:
+                node (loma_ir.ArrayAccess)
 
-        def mutate_struct_access(self, node):
-            # HW2: TODO
-            return super().mutate_struct_access(node)
+            Returns:
+                list[loma_ir.stmt]
+            """
+            return self.mutate_var(node)
+
+        def mutate_struct_access(self, node: loma_ir.StructAccess) -> list[loma_ir.stmt]:
+            """see mutate_var()
+            An StructAccess should be treated the same
+
+            Args:
+                node (loma_ir.StructAccess)
+
+            Returns:
+                list[loma_ir.stmt]
+            """
+            return self.mutate_var(node)
 
         def mutate_add(self, node: loma_ir.Add) -> list[loma_ir.stmt]:
             """f(x, y) = x + y ->
@@ -594,7 +637,6 @@ def reverse_diff(diff_func_id : str,
             right_stmt = self.mutate_expr(node.right)
             self.adjoint = orig_adjoint
 
-            print(f"CHECK left_stmt, right_stmt: {left_stmt, right_stmt}")
             return left_stmt + right_stmt
 
         def mutate_div(self, node: loma_ir.Div) -> list[loma_ir.stmt]:
@@ -741,50 +783,18 @@ def reverse_diff(diff_func_id : str,
 
             return stmts
 
+        def process_args(self, node: loma_ir.FunctionDef) -> list[loma_ir.Arg]:
+            """Rule:
+            x: In -> x: In, dx: Out
+            x: Out -> dx: In
+            Append a _dreturn: In at the end.
 
-        def create_tmp_adjoints(self, node: loma_ir.FunctionDef) -> list[loma_ir.Declare]:
-            """DEPRECATED
-            populate self.tmp_adj_Vars and create tmp adjoint variables
-
-            NOTE:
-                For an Array arr, its _adj_arr will also be an Array of the same type;
-                In this way, we can use the same expr idx to access this tmp adjoint
-            
             Args:
-                node (loma_ir.FunctionDef)
+                node (loma_ir.FunctionDef): _description_
 
             Returns:
-                list[loma_ir.Declare]
+                list[loma_ir.Arg]: _description_
             """
-            return []
-            tmp_adj_body = []
-            ## 1. Who need tmp adjoints?
-            ## Besides for Inputs, also for local vars
-            for stmt in node.body:
-                if isinstance(stmt, loma_ir.Declare):
-                    self.id_vars[stmt.target] = stmt.t
-            ## 2. Build dict[x, Var(_adj_x)]
-            for x, x_type in self.id_vars.items():
-                if isinstance(x_type, loma_ir.Int):
-                    continue
-                elif isinstance(x_type, loma_ir.Array):
-                    self.tmp_adj_Vars[x] = loma_ir.Var(
-                        f"_adj_{x}",
-                        t=loma_ir.Array(
-                            t=x_type.t,
-                            static_size=x_type.static_size
-                        )
-                    )                 
-                elif isinstance(x_type, loma_ir.Float):
-                    self.tmp_adj_Vars[x] = loma_ir.Var(f"_adj_{x}", t=loma_ir.Float())
-                else:
-                    assert False, "NOT IMPLEMENTED YET"
-                tmp_adj_body.append(
-                    loma_ir.Declare(f"_adj_{x}", t=x_type) )
-
-            return tmp_adj_body
-
-        def process_args(self, node: loma_ir.FunctionDef) -> list[loma_ir.Arg]:
             new_args = []
             for arg in node.args:
                 if isinstance(arg.i, loma_ir.In):
@@ -806,10 +816,37 @@ def reverse_diff(diff_func_id : str,
                 else:
                     assert False, "MUST BE IN OR OUT"
 
+            # _dreturn as the start point of rev diff
+            if node.ret_type is not None:
+                new_args.append(loma_ir.Arg('_dreturn', node.ret_type, loma_ir.In()))
+
             return new_args
 
+        def create_cache_and_ptrs(self, n:int) -> list[loma_ir.Declare]:
+            """maually create first few lines to handle stack
+
+            Args:
+                n (int): static size
+
+            Returns:
+                list[loma_ir.Declare]
+            """
+            return [
+                loma_ir.Declare(
+                    "_t_float", 
+                    t=loma_ir.Array(t=loma_ir.Float(), static_size=n)
+                ),
+                loma_ir.Declare("_stack_ptr_float", t=loma_ir.Int()),
+                loma_ir.Declare(
+                    "_t_int", 
+                    t=loma_ir.Array(t=loma_ir.Int(), static_size=n)
+                ),
+                loma_ir.Declare("_stack_ptr_int", t=loma_ir.Int())
+            ]
+
         def new_tmp_adjoint(self, node:loma_ir.expr) -> tuple[loma_ir.expr, ...]:
-            """_summary_
+            """create tmp adjoint (_adj_i) for an expr (x, arr[2], or foo.a) and link
+            record the corresponding derivative (dx, darr[2], or dfoo.a) it belongs to
 
             Args:
                 node (loma_ir.expr)
@@ -826,7 +863,7 @@ def reverse_diff(diff_func_id : str,
                 # recursively trace to array variable name
                 dx = self.diff_array_access(node)
             elif isinstance(node, loma_ir.StructAccess):
-                assert False, "Not implemented yet"
+                dx = self.diff_struct_access(node)
             else:
                 assert False, "Other type of expr shouldn't call"
             # record their link and increment counter
@@ -846,13 +883,39 @@ def reverse_diff(diff_func_id : str,
                 loma_ir.ArrayAccess
             """
             if isinstance(node.array, loma_ir.Var):
-                d_array = loma_ir.Var('_d' + node.array.id) 
+                d_array = loma_ir.Var('_d' + node.array.id)
+            elif isinstance(node.array, loma_ir.StructAccess):
+                # may have array as Struct member, e.g. foo.member_arr[3]
+                d_array = self.diff_struct_access(node.array)
             else:
                 d_array = self.diff_array_access(node.array)
             d_node = loma_ir.ArrayAccess(
                 array=d_array,
                 index=node.index,
                 t=loma_ir.Float()  # shouldn't ever accumulate derivative to int Array
+            )
+            return d_node
+
+        def diff_struct_access(self, node:loma_ir.StructAccess) -> loma_ir.StructAccess:
+            """foo.bar.x -> _dfoo.bar.x
+
+            Args:
+                node (loma_ir.StructAccess)
+
+            Returns:
+                loma_ir.StructAccess
+            """
+            if isinstance(node.struct, loma_ir.Var):
+                d_s = loma_ir.Var('_d' + node.struct.id)
+            elif isinstance(node.struct, loma_ir.ArrayAccess):
+                # may also have array of Struct, e.g. arr[0].x
+                d_s = self.diff_array_access(node.struct)
+            else:
+                d_s = self.diff_array_access(node.struct)
+            d_node = loma_ir.StructAccess(
+                struct=d_s,
+                member_id=node.member_id,
+                t=node.t
             )
             return d_node
             
