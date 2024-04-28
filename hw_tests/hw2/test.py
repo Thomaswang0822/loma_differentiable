@@ -46,13 +46,13 @@ tests_to_run = [
     'test_int_input',
     'test_int_output',
     'test_int_assign',
-    # # Arrays
-    # 'test_array_output',
-    # 'test_array_input',
-    # 'test_int_array_input',
-    # 'test_array_input_indexing',
-    # 'test_array_output_indexing',
-    # 'test_sum_nested_array',
+    # Arrays
+    'test_array_output',
+    'test_array_input',
+    'test_int_array_input',
+    'test_array_input_indexing',
+    'test_array_output_indexing',
+    'test_sum_nested_array',
     # # Structs
     # 'test_struct_input',
     # 'test_struct_output',

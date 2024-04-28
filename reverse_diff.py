@@ -445,13 +445,15 @@ def reverse_diff(diff_func_id : str,
             # lhs of assign can only be Var, ArrayAccess, or StructAccess
             if isinstance(node.target, loma_ir.Var):
                 id_str = node.target.id
+                d_lhs = loma_ir.Var('_d' + id_str, t=node.target.t)
             elif isinstance(node.target, loma_ir.ArrayAccess):
                 id_str = node.target.array.id
+                darr = loma_ir.Var('_d' + id_str)
+                d_lhs = loma_ir.ArrayAccess(array=darr, index=node.target.index)
             elif isinstance(node.target, loma_ir.StructAccess):
                 assert False, "NOT IMPLEMENTED YET"
             else:
                 assert False, "lhs of assign can only be Var, ArrayAccess, or StructAccess"
-            dz_Var = loma_ir.Var('_d' + id_str, t=node.target.t)
             isOut = check_lhs_is_output_arg(node.target)
 
             # 1. & 2.
@@ -459,13 +461,13 @@ def reverse_diff(diff_func_id : str,
                 stmts.append(decrement_ptr[type_str])
                 stmts.append(loma_ir.Assign(node.target, cache_access[type_str]))
             # 3.
-            self.adjoint = dz_Var
+            self.adjoint = d_lhs
             stmts += self.mutate_expr(node.val)
             self.adjoint = None
             
             # 4.
             if not isOut:
-                stmts.append(loma_ir.Assign(dz_Var, loma_ir.ConstFloat(0.0)))
+                stmts.append(loma_ir.Assign(d_lhs, loma_ir.ConstFloat(0.0)))
             # 5.
             while self.i_restore < self.i_new:
                 adj, dx = self.tmp_adj_Vars[self.i_restore]
@@ -509,11 +511,7 @@ def reverse_diff(diff_func_id : str,
             # backprop version
             stmts = []
             # create tmp adjoints
-            adj = loma_ir.Var(f"_adj_{self.i_new}", t=loma_ir.Float())
-            dx = loma_ir.Var('_d' + node.id, lineno=node.lineno, t=node.t)
-            # record their link
-            self.tmp_adj_Vars[self.i_new] = (adj, dx,)
-            self.i_new += 1
+            adj, dx = self.new_tmp_adjoint(node)
             # declare adj
             stmts += [loma_ir.Declare(adj.id, adj.t)]
             # accumulate diff
@@ -522,15 +520,15 @@ def reverse_diff(diff_func_id : str,
             return stmts
 
         def mutate_array_access(self, node: loma_ir.ArrayAccess) -> list[loma_ir.stmt]:
-            arr_name: str = node.array.id
-            assert arr_name in self.tmp_adj_Vars, \
-                f"tmp_adj_Vars KeyError: {arr_name}, keys :{self.tmp_adj_Vars.keys()}"
-            lhs = loma_ir.ArrayAccess(
-                self.tmp_adj_Vars[arr_name],  # _adj_arr
-                node.index,
-                t=self.tmp_adj_Vars[arr_name].t
-            )
-            return accum_deriv(lhs, self.adjoint, overwrite=False)
+            stmts = []
+            # create tmp adjoints
+            adj, dx = self.new_tmp_adjoint(node)
+            # declare adj
+            stmts += [loma_ir.Declare(adj.id, adj.t)]
+            # accumulate diff
+            stmts += accum_deriv(adj, self.adjoint, overwrite=True)
+
+            return stmts
 
         def mutate_struct_access(self, node):
             # HW2: TODO
@@ -596,6 +594,7 @@ def reverse_diff(diff_func_id : str,
             right_stmt = self.mutate_expr(node.right)
             self.adjoint = orig_adjoint
 
+            print(f"CHECK left_stmt, right_stmt: {left_stmt, right_stmt}")
             return left_stmt + right_stmt
 
         def mutate_div(self, node: loma_ir.Div) -> list[loma_ir.stmt]:
@@ -809,14 +808,53 @@ def reverse_diff(diff_func_id : str,
 
             return new_args
 
-        def new_tmp_adjoint(self) -> loma_ir.Var:
-            """Create next _adj_i; increment i
+        def new_tmp_adjoint(self, node:loma_ir.expr) -> tuple[loma_ir.expr, ...]:
+            """_summary_
+
+            Args:
+                node (loma_ir.expr)
 
             Returns:
-                loma_ir.Var: _adj_i
+                tmp adjoint, original derivative
             """
+            # create tmp adjoints
             adj = loma_ir.Var(f"_adj_{self.i_new}", t=loma_ir.Float())
+            # original derivative can be
+            if isinstance(node, loma_ir.Var):
+                dx = loma_ir.Var('_d' + node.id, lineno=node.lineno, t=node.t)
+            elif isinstance(node, loma_ir.ArrayAccess):
+                # recursively trace to array variable name
+                dx = self.diff_array_access(node)
+            elif isinstance(node, loma_ir.StructAccess):
+                assert False, "Not implemented yet"
+            else:
+                assert False, "Other type of expr shouldn't call"
+            # record their link and increment counter
+            self.tmp_adj_Vars[self.i_new] = (adj, dx,)
             self.i_new += 1
-            return adj
+
+            return adj, dx
+
+        def diff_array_access(self, node: loma_ir.ArrayAccess) -> loma_ir.ArrayAccess:
+            """arr[1][2][3] -> _darr[1][2][3]
+            by recursively traverse the array attribute until we get str
+
+            Args:
+                node (loma_ir.ArrayAccess)
+
+            Returns:
+                loma_ir.ArrayAccess
+            """
+            if isinstance(node.array, loma_ir.Var):
+                d_array = loma_ir.Var('_d' + node.array.id) 
+            else:
+                d_array = self.diff_array_access(node.array)
+            d_node = loma_ir.ArrayAccess(
+                array=d_array,
+                index=node.index,
+                t=loma_ir.Float()  # shouldn't ever accumulate derivative to int Array
+            )
+            return d_node
+            
 
     return RevDiffMutator().mutate_function_def(func)
