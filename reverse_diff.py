@@ -457,8 +457,7 @@ def reverse_diff(diff_func_id : str,
             return []
 
         def mutate_const_int(self, node):
-            # HW2: TODO
-            return super().mutate_const_int(node)
+            return []
 
         def mutate_var(self, node: loma_ir.Var) -> list[loma_ir.stmt]:
             """ x -> _dx = _dx + adjoint

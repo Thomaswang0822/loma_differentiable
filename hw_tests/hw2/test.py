@@ -42,10 +42,10 @@ tests_to_run = [
     'test_call_exp',
     'test_call_log',
     'test_call',
-    # # In & Out
-    # 'test_int_input',
-    # 'test_int_output',
-    # 'test_int_assign',
+    # Int
+    'test_int_input',
+    'test_int_output',
+    'test_int_assign',
     # # Arrays
     # 'test_array_output',
     # 'test_array_input',
