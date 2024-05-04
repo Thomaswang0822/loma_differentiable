@@ -5,6 +5,7 @@ import irmutator
 import autodiff
 import string
 import random
+from collections import defaultdict
 
 # From https://stackoverflow.com/questions/2257441/random-string-generation-with-upper-case-letters-and-digits
 def random_id_generator(size=6, chars=string.ascii_lowercase + string.ascii_uppercase + string.digits):
@@ -40,38 +41,56 @@ def reverse_diff(diff_func_id : str,
     """
 
     """Data structures accessed by all sub-classes"""
-    # dicts: str -> stmt
+    # dicts: str(type) -> stmt
     increment_ptr, decrement_ptr = {}, {}
     # dict: str -> expr
     cache_access = {}
     # 'y', 'arr', etc if they are Out in the function args
     output_args: set[str] = set()
+    # we will scan thru statments, look for Assign,
+    # add 'float', 'Foo', 'array_int', etc. as keys
+    # and their number of appearance, s.t. we can allocate cache stack
+    assignted_types_str: dict[str, int] = defaultdict(int)
+    # map a str back to its loma_ir representation
+    map_str2type: dict[str, loma_ir.type] = {}
 
-    def setup_cache_stmts() -> None:
+    def setup_cache_stmts() -> list[loma_ir.stmt]:
         """Store stmts and exprs to be used many times in global memory. 
         e.g.
         _stack_ptr_float = _stack_ptr_float + 1;
         _t_float[_stack_ptr_float]
+
+        NOTE: UPDATE
+        Declare statments of those stacks and stack ptrs are also done
+        and returned here.
+
+        Returns:
+            list[loma_ir.stmt]: [declare stack, declare stack ptr] for each type
         """
-        var_int_ptr = loma_ir.Var('_stack_ptr_int')
-        var_float_ptr = loma_ir.Var('_stack_ptr_float')
         INT_ONE = loma_ir.ConstInt(1)
-        
-        increment_ptr['int'] = loma_ir.Assign(var_int_ptr, loma_ir.BinaryOp(loma_ir.Add(), var_int_ptr, INT_ONE))
-        increment_ptr['float'] = loma_ir.Assign(var_float_ptr, loma_ir.BinaryOp(loma_ir.Add(), var_float_ptr, INT_ONE))
-        decrement_ptr['int'] = loma_ir.Assign(var_int_ptr, loma_ir.BinaryOp(loma_ir.Sub(), var_int_ptr, INT_ONE))
-        decrement_ptr['float'] = loma_ir.Assign(var_float_ptr, loma_ir.BinaryOp(loma_ir.Sub(), var_float_ptr, INT_ONE))
-        
-        
-        cache_access['int'] = loma_ir.ArrayAccess(
-            loma_ir.Var("_t_int"),
-            var_int_ptr,
-            t=loma_ir.Int() )
-        cache_access['float'] = loma_ir.ArrayAccess(
-            loma_ir.Var("_t_float"),
-            var_float_ptr,
-            t=loma_ir.Float() )
-        return
+        res = []
+        # take 'float' as example
+        for t_str, ct in assignted_types_str.items():
+            var_ptr = loma_ir.Var(f'_stack_ptr_{t_str}')
+            # stmt: _stack_ptr_float = _stack_ptr_float +/- 1
+            increment_ptr[t_str] = loma_ir.Assign(var_ptr, loma_ir.BinaryOp(loma_ir.Add(), var_ptr, INT_ONE))
+            decrement_ptr[t_str] = loma_ir.Assign(var_ptr, loma_ir.BinaryOp(loma_ir.Sub(), var_ptr, INT_ONE))
+            # expr: _t_float[_stack_ptr_float]
+            cache_access[t_str] = loma_ir.ArrayAccess(
+                loma_ir.Var(f"_t_{t_str}"),
+                var_ptr,
+                t=map_str2type[t_str])
+            res += [
+                loma_ir.Declare(
+                    f"_t_{t_str}", 
+                    t=loma_ir.Array(
+                        t=map_str2type[t_str], 
+                        static_size=ct)
+                ),
+                loma_ir.Declare(f"_stack_ptr_{t_str}", t=loma_ir.Int())
+            ]
+
+        return res
 
     # Some utility functions
     def type_to_string(t):
@@ -181,19 +200,6 @@ def reverse_diff(diff_func_id : str,
                 return check_lhs_is_output_arg(lhs.array)
             case _:
                 assert False
-    
-    def advance_stack_ptr(target: str, isIncr: bool) -> loma_ir.Assign:
-        """return an Assign stmt
-        _stack_ptr_float = _stack_ptr_float +/- 1;
-        """
-        return loma_ir.Assign(
-            target, 
-            loma_ir.BinaryOp(
-                loma_ir.Add() if isIncr else loma_ir.Sub(),
-                loma_ir.Var(target),
-                loma_ir.ConstInt(1)
-            )
-        )
 
     # A utility class that you can use for HW3.
     # This mutator normalizes each call expression into
@@ -315,8 +321,7 @@ def reverse_diff(diff_func_id : str,
             # node.target is expr
             if check_lhs_is_output_arg(node.target):
                 return []
-            elif isinstance(node.target.t, loma_ir.Struct):
-                return [node]
+
             type_str = type_to_string(node.target.t)
             store_cache = loma_ir.Assign(cache_access[type_str], node.target)
             return [store_cache, increment_ptr[type_str], node]
@@ -359,23 +364,13 @@ def reverse_diff(diff_func_id : str,
             # Signature (args)
             new_args = self.process_args(node)
             
-            # cache
-            # TODO: choose optimal size later
-            n = len(node.body)
-            stack_body = [
-                loma_ir.Declare(
-                    "_t_float", 
-                    t=loma_ir.Array(t=loma_ir.Float(), static_size=n)
-                ),
-                loma_ir.Declare("_stack_ptr_float", t=loma_ir.Int()),
-                loma_ir.Declare(
-                    "_t_int", 
-                    t=loma_ir.Array(t=loma_ir.Int(), static_size=n)
-                ),
-                loma_ir.Declare("_stack_ptr_int", t=loma_ir.Int())
-            ]
-            # set up reusable things
-            setup_cache_stmts()
+            # Cache
+            """ preprocess body to know what types need their cache stack """
+            self.preprocess_statements(node.body)
+            """Use the info in dict assignted_types_str to
+            declare stacks and their ptrs, and setup reusable
+            statments (ptr++, ptr--, push, pop) """
+            stack_body = setup_cache_stmts()
 
             # copy paste forward code
             fwd_new_body = irmutator.flatten( [PrimalCodeMutator().mutate_stmt(stmt) for stmt in node.body] )
@@ -468,12 +463,12 @@ def reverse_diff(diff_func_id : str,
             Returns:
                 list[loma_ir.stmt]
             """
-            # need special handle for Struct, e.g. foo = f
-            if isinstance(node.val.t, loma_ir.Struct):
-                print(f"CHECK node.val: {node.val}")
-                drhs = loma_ir.Var('_d' + node.val.id, t=node.val.t)
-                dlhs = loma_ir.Var('_d' + node.target.id, t=node.target.t)
-                return accum_deriv(drhs, dlhs, overwrite=False)
+            # # need special handle for Struct, e.g. foo = f
+            # if isinstance(node.val.t, loma_ir.Struct):
+            #     # print(f"CHECK node.val: {node.val}")
+            #     drhs = loma_ir.Var('_d' + node.val.id, t=node.val.t)
+            #     dlhs = loma_ir.Var('_d' + node.target.id, t=node.target.t)
+            #     return accum_deriv(drhs, dlhs, overwrite=False)
             
             stmts = []
             type_str = type_to_string(node.target.t)
@@ -822,31 +817,29 @@ def reverse_diff(diff_func_id : str,
 
             return new_args
 
-        def create_cache_and_ptrs(self, n:int) -> list[loma_ir.Declare]:
-            """maually create first few lines to handle stack
+        def preprocess_statements(self, stmts: list[loma_ir.stmt]) -> None:
+            """The only task:
+            Add type string (other than 'float' and 'int') of the LHS of an Assign statment,
+            which may cause side-effect (assign overwritten), to the assignted_types_str dict.
 
             Args:
-                n (int): static size
-
-            Returns:
-                list[loma_ir.Declare]
+                stmts (list[loma_ir.stmt]): primal code list of statements
             """
-            return [
-                loma_ir.Declare(
-                    "_t_float", 
-                    t=loma_ir.Array(t=loma_ir.Float(), static_size=n)
-                ),
-                loma_ir.Declare("_stack_ptr_float", t=loma_ir.Int()),
-                loma_ir.Declare(
-                    "_t_int", 
-                    t=loma_ir.Array(t=loma_ir.Int(), static_size=n)
-                ),
-                loma_ir.Declare("_stack_ptr_int", t=loma_ir.Int())
-            ]
+            for node in stmts:
+                if not isinstance(node, loma_ir.Assign):
+                    continue
+                # look at LHS type
+                lhs_type_str = type_to_string(node.target.t)
+                # defaultdict saves the check empty
+                assignted_types_str[lhs_type_str] += 1
+                map_str2type[lhs_type_str] = node.target.t
+            
+            # print(f"CHECK assignted_types_str: {assignted_types_str}")
+            return
 
         def new_tmp_adjoint(self, node:loma_ir.expr) -> tuple[loma_ir.expr, ...]:
-            """create tmp adjoint (_adj_i) for an expr (x, arr[2], or foo.a) and link
-            record the corresponding derivative (dx, darr[2], or dfoo.a) it belongs to
+            """create tmp adjoint (_adj_{i}) for an expr (x, arr[2], foo.a, or foo)
+            record the corresponding derivative (dx, darr[2], dfoo.a, or dfoo) it belongs to
 
             Args:
                 node (loma_ir.expr)
@@ -855,7 +848,7 @@ def reverse_diff(diff_func_id : str,
                 tmp adjoint, original derivative
             """
             # create tmp adjoints
-            adj = loma_ir.Var(f"_adj_{self.i_new}", t=loma_ir.Float())
+            adj = loma_ir.Var(f"_adj_{self.i_new}", t=node.t)
             # original derivative can be
             if isinstance(node, loma_ir.Var):
                 dx = loma_ir.Var('_d' + node.id, lineno=node.lineno, t=node.t)
