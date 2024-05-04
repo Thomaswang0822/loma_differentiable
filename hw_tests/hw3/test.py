@@ -22,10 +22,10 @@ tests_to_run = [
     'test_ifelse_rev',
     'test_ifelse_side_effects_rev',
     'test_nested_ifelse_rev',
-    # # function call
-    # 'test_func_call_fwd',
-    # 'test_chained_calls_fwd',
-    # 'test_call_stmt_fwd',
+    # function call
+    'test_func_call_fwd',
+    'test_chained_calls_fwd',
+    'test_call_stmt_fwd',
     # 'test_func_call_rev',
     # 'test_func_call_rev2',
     # 'test_func_call_assign_rev',
