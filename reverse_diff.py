@@ -288,7 +288,7 @@ def reverse_diff(diff_func_id : str,
                 case loma_ir.Assign():
                     return self.mutate_assign(node)
                 case loma_ir.IfElse():
-                    return []
+                    return super().mutate_ifelse(node)
                 case loma_ir.While():
                     return []
                 case loma_ir.CallStmt():
@@ -325,7 +325,6 @@ def reverse_diff(diff_func_id : str,
             type_str = type_to_string(node.target.t)
             store_cache = loma_ir.Assign(cache_access[type_str], node.target)
             return [store_cache, increment_ptr[type_str], node]
-
 
     # Apply the differentiation.
     class RevDiffMutator(irmutator.IRMutator):
@@ -374,13 +373,13 @@ def reverse_diff(diff_func_id : str,
 
             # copy paste forward code
             fwd_new_body = irmutator.flatten( [PrimalCodeMutator().mutate_stmt(stmt) for stmt in node.body] )
-            
-            # populate tmp_adj_Vars and create tmp adjoint variables
-            # UPDATE: will create tmp adjoints on the fly
-            tmp_adj_body = []
 
             # backward diff
             rev_new_body = irmutator.flatten( [self.mutate_stmt(stmt) for stmt in reversed(node.body)] )
+            
+            # UPDATE: tmp adjoint declaration lines at the beginning of rev code,
+            # but only can be created after we mutate the body
+            tmp_adj_body = self.declare_tmp_adjoints()
 
             # put together everything
             body = stack_body + fwd_new_body + tmp_adj_body + rev_new_body
@@ -505,9 +504,19 @@ def reverse_diff(diff_func_id : str,
 
             return stmts
 
-        def mutate_ifelse(self, node):
-            # HW3: TODO
-            return super().mutate_ifelse(node)
+        def mutate_ifelse(self, node: loma_ir.IfElse) -> loma_ir.IfElse:
+            # in rev mode, y and _dy are separate
+            new_cond = node.cond
+            new_then_stmts = [self.mutate_stmt(stmt) for stmt in reversed(node.then_stmts)]
+            new_else_stmts = [self.mutate_stmt(stmt) for stmt in reversed(node.else_stmts)]
+            # Important: mutate_stmt can return a list of statements. We need to flatten the lists.
+            new_then_stmts = irmutator.flatten(new_then_stmts)
+            new_else_stmts = irmutator.flatten(new_else_stmts)
+            return loma_ir.IfElse(
+                new_cond,
+                new_then_stmts,
+                new_else_stmts,
+                lineno = node.lineno)
 
         def mutate_call_stmt(self, node):
             # HW3: TODO
@@ -541,8 +550,8 @@ def reverse_diff(diff_func_id : str,
             stmts = []
             # create tmp adjoints
             adj, dx = self.new_tmp_adjoint(node)
-            # declare adj
-            stmts += [loma_ir.Declare(adj.id, adj.t)]
+            # UPDATE: CANNOT declare adj ON-THE-FLY
+            # stmts += [loma_ir.Declare(adj.id, adj.t)]
             # accumulate diff
             stmts += accum_deriv(adj, self.adjoint, overwrite=True)
 
@@ -826,13 +835,19 @@ def reverse_diff(diff_func_id : str,
                 stmts (list[loma_ir.stmt]): primal code list of statements
             """
             for node in stmts:
-                if not isinstance(node, loma_ir.Assign):
-                    continue
-                # look at LHS type
-                lhs_type_str = type_to_string(node.target.t)
-                # defaultdict saves the check empty
-                assignted_types_str[lhs_type_str] += 1
-                map_str2type[lhs_type_str] = node.target.t
+                if isinstance(node, loma_ir.Assign):
+                    # look at LHS type
+                    lhs_type_str = type_to_string(node.target.t)
+                    # defaultdict saves the check empty
+                    assignted_types_str[lhs_type_str] += 1
+                    map_str2type[lhs_type_str] = node.target.t
+                elif isinstance(node, loma_ir.Declare):
+                    # Assign to the declared variable may happen in if/else & loop
+                    # look at LHS type
+                    lhs_type_str = type_to_string(node.t)
+                    # defaultdict saves the check empty
+                    assignted_types_str[lhs_type_str] += 1
+                    map_str2type[lhs_type_str] = node.t
             
             # print(f"CHECK assignted_types_str: {assignted_types_str}")
             return
@@ -864,6 +879,20 @@ def reverse_diff(diff_func_id : str,
             self.i_new += 1
 
             return adj, dx
+
+        def declare_tmp_adjoints(self) -> list[loma_ir.Declare]:
+            """Use tmp_adj_Vars, which is populated after mutate body,
+            to create tmp adjoints declaration lines
+
+            Returns:
+                list[loma_ir.Declare]
+            """
+            res = []
+            for i in self.tmp_adj_Vars:
+                # grab tmp adjoint: loma_ir.Var
+                adj, _ = self.tmp_adj_Vars[i]
+                res.append(loma_ir.Declare(adj.id, adj.t))
+            return res
 
         def diff_array_access(self, node: loma_ir.ArrayAccess) -> loma_ir.ArrayAccess:
             """arr[1][2][3] -> _darr[1][2][3]

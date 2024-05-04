@@ -129,9 +129,18 @@ def forward_diff(diff_func_id : str,
                 raise TypeError("assigned value has wrong type")
             return loma_ir.Assign(target, rhs_expr, lineno = node.lineno)
 
-        def mutate_ifelse(self, node):
-            # HW3: TODO
-            return super().mutate_ifelse(node)
+        def mutate_ifelse(self, node: loma_ir.IfElse) -> loma_ir.IfElse:
+            new_cond = self.mutate_expr(node.cond)
+            new_then_stmts = [self.mutate_stmt(stmt) for stmt in node.then_stmts]
+            new_else_stmts = [self.mutate_stmt(stmt) for stmt in node.else_stmts]
+            # Important: mutate_stmt can return a list of statements. We need to flatten the lists.
+            new_then_stmts = irmutator.flatten(new_then_stmts)
+            new_else_stmts = irmutator.flatten(new_else_stmts)
+            return loma_ir.IfElse(
+                new_cond,
+                new_then_stmts,
+                new_else_stmts,
+                lineno = node.lineno)
 
         def mutate_while(self, node):
             # HW3: TODO
@@ -227,6 +236,46 @@ def forward_diff(diff_func_id : str,
                 denom
             )
             return val, dval
+
+        def mutate_less(self, node):
+            # don't care about dval during compare
+            lval, rval, _, _ = self.extract_binary_val_dval(node)
+            return loma_ir.BinaryOp(
+                loma_ir.Less(), lval, rval,
+                lineno=node.lineno, t=node.t
+            )
+
+        def mutate_less_equal(self, node):
+            # don't care about dval during compare
+            lval, rval, _, _ = self.extract_binary_val_dval(node)
+            return loma_ir.BinaryOp(
+                loma_ir.LessEqual(), lval, rval,
+                lineno=node.lineno, t=node.t
+            )
+
+        def mutate_greater(self, node):
+            # don't care about dval during compare
+            lval, rval, _, _ = self.extract_binary_val_dval(node)
+            return loma_ir.BinaryOp(
+                loma_ir.Greater(), lval, rval,
+                lineno=node.lineno, t=node.t
+            )
+
+        def mutate_greater_equal(self, node):
+            # don't care about dval during compare
+            lval, rval, _, _ = self.extract_binary_val_dval(node)
+            return loma_ir.BinaryOp(
+                loma_ir.GreaterEqual(), lval, rval,
+                lineno=node.lineno, t=node.t
+            )
+
+        def mutate_equal(self, node):
+            # don't care about dval during compare
+            lval, rval, _, _ = self.extract_binary_val_dval(node)
+            return loma_ir.BinaryOp(
+                loma_ir.Equal(), lval, rval,
+                lineno=node.lineno, t=node.t
+            )
 
         """handle intrinsic function calls (sin, exp, etc.)
         and let others pass by.
