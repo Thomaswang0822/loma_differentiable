@@ -201,6 +201,30 @@ def reverse_diff(diff_func_id : str,
             case _:
                 assert False
 
+    def find_CallStmt_Out_args(node: loma_ir.CallStmt) -> list[loma_ir.expr]:
+        """Given a primal-code CallStmt, find those args (expr) that act as
+        Out of the callee but are not of the self/caller.
+        These args can potentially cause side effect.
+
+        Args:
+            node (loma_ir.CallStmt): e.g. foo(x, y)
+
+        Returns:
+            list[loma_ir.expr]: _description_
+        """
+        out_args_expr: list[loma_ir.expr] = []
+        func_name: str = node.call.id
+        actual_func: loma_ir.FunctionDef = funcs[func_name]
+        inouts: list[loma_ir.inout] = [arg.i for arg in actual_func.args]
+        for arg_expr, io in zip(node.call.args, inouts):
+            # arg_expr takes the place of an Out arg of the callee
+            if io == loma_ir.Out():
+                # but skip if arg_expr is an Out arg of the caller
+                if not check_lhs_is_output_arg(arg_expr):
+                    out_args_expr.append(arg_expr)
+        print(f"CHECK out_args_expr: {out_args_expr}")
+        return out_args_expr
+
     # A utility class that you can use for HW3.
     # This mutator normalizes each call expression into
     # f(x0, x1, ...)
@@ -302,7 +326,7 @@ def reverse_diff(diff_func_id : str,
                 case loma_ir.While():
                     return []
                 case loma_ir.CallStmt():
-                    return super().mutate_call_stmt(node)
+                    return self.mutate_call_stmt(node)
                 case _:
                     assert False, f'Visitor error: unhandled statement {node}'
 
@@ -339,6 +363,39 @@ def reverse_diff(diff_func_id : str,
             type_str = type_to_string(node.target.t)
             store_cache = loma_ir.Assign(cache_access[type_str], node.target)
             return [store_cache, increment_ptr[type_str], node]
+
+        def mutate_call_stmt(self, node: loma_ir.CallStmt) -> list[loma_ir.stmt]:
+            """Analogous to mutate_assign() above
+
+            Args:
+                node (loma_ir.CallStmt): _description_
+
+            Returns:
+                list[loma_ir.stmt]: _description_
+            """
+            # If the primal code calls foo(x, y), but y is an Out in the arg list,
+            # we need to ignore this CallStmt
+            for arg_expr in node.call.args:
+                if check_lhs_is_output_arg(arg_expr):
+                    return []
+            
+
+            pre = []
+            call_lines = [super().mutate_call_stmt(node)]
+
+            # 0. find all Out arg (expr)
+            out_args_expr: list[loma_ir.expr] = find_CallStmt_Out_args(node)
+
+            # Example: y is Out in foo(x, y)
+            for arg_expr in out_args_expr:
+                # arg_expr is y
+                type_str: str = type_to_string(arg_expr.t)
+                # store cache
+                pre.append(loma_ir.Assign(cache_access[type_str], arg_expr))
+                # increment ptr
+                pre.append(increment_ptr[type_str])
+
+            return pre + call_lines
 
     # Apply the differentiation.
     class RevDiffMutator(irmutator.IRMutator):
@@ -511,9 +568,39 @@ def reverse_diff(diff_func_id : str,
                 new_else_stmts,
                 lineno = node.lineno)
 
-        def mutate_call_stmt(self, node):
-            # HW3: TODO
-            return super().mutate_call_stmt(node)
+        def mutate_call_stmt(self, node: loma_ir.CallStmt) -> list[loma_ir.stmt]:
+            """Similar to mutate_assign(), use tmp adjoint and cache stack
+            to deal with side effect.
+            Side effect is dealt with here instead of in mutate_call() because
+            a Call can be a RHS expr, like y = foo(x,y), which will be dealt
+            by mutate_assign().
+
+            NOTE:
+                This time, the 12345 steps are done on every Out of primal function.
+            """
+            pre, post = [], []
+            call_lines = self.mutate_custom_call_bwd(node.call)
+
+            # 0. find all Out arg (expr)
+            out_args_expr: list[loma_ir.expr] = find_CallStmt_Out_args(node)
+
+            # Example: y is Out in foo(x, y)
+            for arg_expr in out_args_expr:
+                # arg_expr is y
+                type_str: str = type_to_string(arg_expr.t)
+                # 1. & 2.
+                pre.append(decrement_ptr[type_str])
+                pre.append(loma_ir.Assign(arg_expr, cache_access[type_str]))
+                # 3. mutate_custom_call_bwd() should be outside
+                # 4. zero out _dy
+                post += assign_zero(self.to_d_expr(arg_expr))
+                # 5.
+                while self.i_restore < self.i_new:
+                    adj, dx = self.tmp_adj_Vars[self.i_restore]
+                    post += accum_deriv(dx, adj, overwrite=False)
+                    self.i_restore += 1
+
+            return pre + call_lines + post
 
         def mutate_while(self, node):
             # HW3: TODO
@@ -779,11 +866,6 @@ def reverse_diff(diff_func_id : str,
             self.adjoint = curr_adjoint
 
             return stmts
-        
-        def mutate_call_stmt(self, node: loma_ir.CallStmt) -> list[loma_ir.stmt]:
-            # in RevDiffMutator, every callee of mutate_expr() returns
-            # a list of statemtents
-            return self.mutate_expr(node.call)
 
         def process_args(self, node: loma_ir.FunctionDef) -> list[loma_ir.Arg]:
             """Rule:
@@ -799,7 +881,12 @@ def reverse_diff(diff_func_id : str,
             """
             new_args = []
             for arg in node.args:
+                # In/Out
                 if isinstance(arg.i, loma_ir.In):
+                    # # Save type str to map
+                    # type_str: str = type_to_string(arg.t)
+                    # assignted_types_str[type_str] += 1
+                    # map_str2type[type_str] = arg.t
                     new_args.append(arg)
                     # also _dx of x
                     darg = loma_ir.Arg(

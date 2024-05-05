@@ -17,18 +17,18 @@ epsilon = 1e-4
 # List of test method names to run
 # comment out function names to skip them
 tests_to_run = [
-    # if/else
-    'test_ifelse_fwd',
-    'test_ifelse_rev',
-    'test_ifelse_side_effects_rev',
-    'test_nested_ifelse_rev',
+    # # if/else
+    # 'test_ifelse_fwd',
+    # 'test_ifelse_rev',
+    # 'test_ifelse_side_effects_rev',
+    # 'test_nested_ifelse_rev',
     # function call
-    'test_func_call_fwd',
-    'test_chained_calls_fwd',
-    'test_call_stmt_fwd',
+    # 'test_func_call_fwd',
+    # 'test_chained_calls_fwd',
+    # 'test_call_stmt_fwd',
     # 'test_func_call_rev',
     # 'test_func_call_rev2',
-    # 'test_func_call_assign_rev',
+    'test_func_call_assign_rev',
     # 'test_call_array_rev',
     # 'test_call_stmt_rev',
     # 'test_call_stmt2_rev',
