@@ -207,7 +207,17 @@ def reverse_diff(diff_func_id : str,
     # where x0, x1, ... are all loma_ir.Var or 
     # loma_ir.ArrayAccess or loma_ir.StructAccess
     class CallNormalizeMutator(irmutator.IRMutator):
-        def mutate_function_def(self, node):
+        """Helper class that factor out the expressions inside the function arguments, 
+        until they can be used as a left hand side in an assign statement.
+
+        Example: f(x*y, 5.0+z) will be turned into
+        _call_t_0: float
+        _call_t_1: float
+        _call_t_0 = x*y
+        _call_t_1 = 5.0+z
+        f(_call_t_0, _call_t_1)
+        """
+        def mutate_function_def(self, node: loma_ir.FunctionDef):
             self.tmp_count = 0
             self.tmp_declare_stmts = []
             new_body = [self.mutate_stmt(stmt) for stmt in node.body]
@@ -259,7 +269,8 @@ def reverse_diff(diff_func_id : str,
                         not isinstance(arg, loma_ir.ArrayAccess) and \
                         not isinstance(arg, loma_ir.StructAccess):
                     arg = self.mutate_expr(arg)
-                    tmp_name = f'_call_t_{self.tmp_count}_{random_id_generator()}'
+                    # tmp_name = f'_call_t_{self.tmp_count}_{random_id_generator()}'
+                    tmp_name = f'_call_t_{self.tmp_count}'
                     self.tmp_count += 1
                     tmp_var = loma_ir.Var(tmp_name, t = arg.t)
                     self.tmp_declare_stmts.append(loma_ir.Declare(\
@@ -281,8 +292,7 @@ def reverse_diff(diff_func_id : str,
         def mutate_stmt(self, node):
             match node:
                 case loma_ir.Return():
-                    # hide original return
-                    return []
+                    return self.mutate_return(node)
                 case loma_ir.Declare():
                     return self.mutate_declare(node)
                 case loma_ir.Assign():
@@ -292,9 +302,13 @@ def reverse_diff(diff_func_id : str,
                 case loma_ir.While():
                     return []
                 case loma_ir.CallStmt():
-                    return []
+                    return super().mutate_call_stmt(node)
                 case _:
                     assert False, f'Visitor error: unhandled statement {node}'
+
+        def mutate_return(self, node: loma_ir.Return):
+            # hide original return
+            return []
 
         def mutate_declare(self, node: loma_ir.Declare):
             # automatically initialized to zero if no val
@@ -350,16 +364,19 @@ def reverse_diff(diff_func_id : str,
         tmp_adj_Vars: dict[int, tuple] = {}
 
         """ mutator functions """
-        def mutate_function_def(self, node: loma_ir.FunctionDef) -> loma_ir.FunctionDef:
+        def mutate_function_def(self, primal_node: loma_ir.FunctionDef) -> loma_ir.FunctionDef:
             """caller of all functions below.
             Turn a full function definition to its bwd_diff version
 
             Args:
-                node (loma_ir.FunctionDef)
+                primal_node (loma_ir.FunctionDef)
 
             Returns:
                 loma_ir.FunctionDef
             """
+            # BEFORE ALL, normalize call such as f(x+y, 5*z), see
+            node: loma_ir.FunctionDef = CallNormalizeMutator().mutate_function_def(primal_node)
+            
             # Signature (args)
             new_args = self.process_args(node)
             
@@ -394,13 +411,7 @@ def reverse_diff(diff_func_id : str,
 
             Returns:
                 list[loma_ir.stmt]
-            """
-            # special handle for Struct, e.g. return foo
-            if isinstance(node.val.t, loma_ir.Struct):
-                dval = loma_ir.Var('_d' + node.val.id, t=node.val.t)
-                dret = loma_ir.Var('_dreturn')
-                return accum_deriv(dval, dret, overwrite=True)
-            
+            """            
             # in bwd part, mutate_return should be the first to execute,
             # set global adjoint s.t. callee can use
             # 3.
@@ -426,11 +437,6 @@ def reverse_diff(diff_func_id : str,
             """
             if node.val is None:
                 return []
-            # special handle for Struct, e.g. foo : Foo = f
-            elif isinstance(node.val.t, loma_ir.Struct):
-                drhs = loma_ir.Var('_d' + node.val.id, t=node.val.t)
-                dlhs = loma_ir.Var('_d' + node.target, t=node.t)
-                return accum_deriv(drhs, dlhs, overwrite=False)
             
             # 3.
             self.adjoint = loma_ir.Var('_d' + node.target, t=node.t)
@@ -462,26 +468,13 @@ def reverse_diff(diff_func_id : str,
             Returns:
                 list[loma_ir.stmt]
             """
-            # # need special handle for Struct, e.g. foo = f
-            # if isinstance(node.val.t, loma_ir.Struct):
-            #     # print(f"CHECK node.val: {node.val}")
-            #     drhs = loma_ir.Var('_d' + node.val.id, t=node.val.t)
-            #     dlhs = loma_ir.Var('_d' + node.target.id, t=node.target.t)
-            #     return accum_deriv(drhs, dlhs, overwrite=False)
-            
             stmts = []
             type_str = type_to_string(node.target.t)
-            # lhs of assign can only be Var, ArrayAccess, or StructAccess
-            if isinstance(node.target, loma_ir.Var):
-                id_str = node.target.id
-                d_lhs = loma_ir.Var('_d' + id_str, t=node.target.t)
-            elif isinstance(node.target, loma_ir.ArrayAccess):
-                d_lhs = self.diff_array_access(node.target)
-            elif isinstance(node.target, loma_ir.StructAccess):
-                d_lhs = self.diff_struct_access(node.target)
-            else:
-                assert False, "lhs of assign can only be Var, ArrayAccess, or StructAccess"
             isOut = check_lhs_is_output_arg(node.target)
+
+            # 0. find _d{node.target}, which is also an expr
+            # lhs of assign can only be Var, ArrayAccess, or StructAccess
+            d_lhs = self.to_d_expr(node.target)    
 
             # 1. & 2.
             if not isOut:
@@ -775,8 +768,8 @@ def reverse_diff(diff_func_id : str,
                 case "float2int":
                     return []
                 case _:
-                    # non-intrinsic function with >=0 args
-                    assert False, "non-intrinsic function with >=0 args"
+                    # custom function
+                    return self.mutate_custom_call_bwd(node)
             
             # multiply df_dexpr to adjoint and mutate_expr on x
             curr_adjoint = self.adjoint
@@ -786,6 +779,11 @@ def reverse_diff(diff_func_id : str,
             self.adjoint = curr_adjoint
 
             return stmts
+        
+        def mutate_call_stmt(self, node: loma_ir.CallStmt) -> list[loma_ir.stmt]:
+            # in RevDiffMutator, every callee of mutate_expr() returns
+            # a list of statemtents
+            return self.mutate_expr(node.call)
 
         def process_args(self, node: loma_ir.FunctionDef) -> list[loma_ir.Arg]:
             """Rule:
@@ -940,6 +938,62 @@ def reverse_diff(diff_func_id : str,
                 t=node.t
             )
             return d_node
+
+        def to_d_expr(self, node: loma_ir.expr) -> loma_ir.expr:
+            """Add "_d" in front of a LHS value; struct and array access
+            make it non-trivial
+
+            NOTE:
+                LHS value can only be Var, ArrayAccess, or StructAccess;
+                and Var include Array and Struct
+            """
+            d_lhs: loma_ir.expr = None
+            if isinstance(node, loma_ir.Var):
+                id_str = node.id
+                d_lhs = loma_ir.Var('_d' + id_str, t=node.t)
+            elif isinstance(node, loma_ir.ArrayAccess):
+                d_lhs = self.diff_array_access(node)
+            elif isinstance(node, loma_ir.StructAccess):
+                d_lhs = self.diff_struct_access(node)
+            else:
+                assert False, f"lhs value can only be Var, ArrayAccess, or StructAccess, got {node}"
+            return d_lhs
+
+        def mutate_custom_call_bwd(self, node: loma_ir.Call) -> list[loma_ir.stmt]:
+            d_func_name = func_to_rev[node.id]
+
+            # grab In/Out of the arguments, this time for a different reason
+            actual_func: loma_ir.FunctionDef = funcs[node.id]
+            inouts: list[loma_ir.inout] = [arg.i for arg in actual_func.args]
+            assert len(inouts) == len(node.args)
+
+            # process args, example foo(x : In[float], y : Out[float])
+            d_args: list[loma_ir.expr] = []
+            for arg_expr, io in zip(node.args, inouts):
+                arg_expr: loma_ir.expr
+                # if In, keep x as In and _dx as out
+                if io == loma_ir.In():
+                    d_args.append(arg_expr)
+                    d_args.append(self.to_d_expr(arg_expr))
+                # if Out, keep only _dy as Out
+                elif io == loma_ir.Out():
+                    d_args.append(self.to_d_expr(arg_expr))
+                else:
+                    assert False, f"custom call on {d_func_name} has arg not In/Out"
+            # IMPORTANT: if primal function returns instead of storing to Out
+            if actual_func.ret_type is not None:
+                # e.g. foo(x : In[float], y : In[float]) -> float:
+                # This Call should appear in an Assign or Declare or Return,
+                # where the storage Var has been written to self.adjoint
+                d_args.append(self.adjoint)
+
+            stmts = []
+            stmts.append(loma_ir.CallStmt(
+                call=loma_ir.Call(id=d_func_name, args=d_args, lineno=node.lineno, t=node.t)
+            ))
+
+            return stmts
+                  
             
 
     return RevDiffMutator().mutate_function_def(func)
