@@ -222,7 +222,7 @@ def reverse_diff(diff_func_id : str,
                 # but skip if arg_expr is an Out arg of the caller
                 if not check_lhs_is_output_arg(arg_expr):
                     out_args_expr.append(arg_expr)
-        print(f"CHECK out_args_expr: {out_args_expr}")
+        # print(f"CHECK out_args_expr: {out_args_expr}")
         return out_args_expr
 
     # A utility class that you can use for HW3.
@@ -335,6 +335,8 @@ def reverse_diff(diff_func_id : str,
             return []
 
         def mutate_declare(self, node: loma_ir.Declare):
+            if isinstance(node.t, loma_ir.Int):
+                return [node]
             # automatically initialized to zero if no val
             diff_declare = loma_ir.Declare('_d' + node.target, t=node.t)  
             
@@ -433,6 +435,8 @@ def reverse_diff(diff_func_id : str,
             """
             # BEFORE ALL, normalize call such as f(x+y, 5*z), see
             node: loma_ir.FunctionDef = CallNormalizeMutator().mutate_function_def(primal_node)
+            # for bbb in node.body:
+            #     print(f"CHECK: {bbb}")
             
             # Signature (args)
             new_args = self.process_args(node)
@@ -599,6 +603,16 @@ def reverse_diff(diff_func_id : str,
                     adj, dx = self.tmp_adj_Vars[self.i_restore]
                     post += accum_deriv(dx, adj, overwrite=False)
                     self.i_restore += 1
+
+            """Deal with:
+            _adj_0 : float
+            _d_rev_foo(x,_adj_0,_dy)
+            _dx = (_dx) + (_adj_0)
+            """
+            while self.i_restore < self.i_new:
+                adj, dx = self.tmp_adj_Vars[self.i_restore]
+                post += accum_deriv(dx, adj, overwrite=False)
+                self.i_restore += 1
 
             return pre + call_lines + post
 
@@ -1047,6 +1061,7 @@ def reverse_diff(diff_func_id : str,
             return d_lhs
 
         def mutate_custom_call_bwd(self, node: loma_ir.Call) -> list[loma_ir.stmt]:
+            stmts = []
             d_func_name = func_to_rev[node.id]
 
             # grab In/Out of the arguments, this time for a different reason
@@ -1061,8 +1076,13 @@ def reverse_diff(diff_func_id : str,
                 # if In, keep x as In and _dx as out
                 if io == loma_ir.In():
                     d_args.append(arg_expr)
-                    d_args.append(self.to_d_expr(arg_expr))
-                # if Out, keep only _dy as Out
+                    # find out "_dx"
+                    if isinstance(arg_expr.t, loma_ir.Array):
+                        d_args.append(self.to_d_expr(arg_expr))
+                    else:
+                        adj, _ = self.new_tmp_adjoint(arg_expr)
+                        d_args.append(adj)
+                # if Out, keep only _dy as In
                 elif io == loma_ir.Out():
                     d_args.append(self.to_d_expr(arg_expr))
                 else:
@@ -1074,7 +1094,6 @@ def reverse_diff(diff_func_id : str,
                 # where the storage Var has been written to self.adjoint
                 d_args.append(self.adjoint)
 
-            stmts = []
             stmts.append(loma_ir.CallStmt(
                 call=loma_ir.Call(id=d_func_name, args=d_args, lineno=node.lineno, t=node.t)
             ))

@@ -23,19 +23,19 @@ tests_to_run = [
     # 'test_ifelse_side_effects_rev',
     # 'test_nested_ifelse_rev',
     # function call
-    # 'test_func_call_fwd',
-    # 'test_chained_calls_fwd',
-    # 'test_call_stmt_fwd',
-    # 'test_func_call_rev',
-    # 'test_func_call_rev2',
+    'test_func_call_fwd',
+    'test_chained_calls_fwd',
+    'test_call_stmt_fwd',
+    'test_func_call_rev',
+    'test_func_call_rev2',
     'test_func_call_assign_rev',
-    # 'test_call_array_rev',
-    # 'test_call_stmt_rev',
-    # 'test_call_stmt2_rev',
-    # 'test_call_stmt_side_effects',
-    # 'test_call_stmt_side_effects2',
-    # 'test_call_stmt_array_rev',
-    # 'test_chained_calls_rev',
+    'test_call_array_rev',
+    'test_call_stmt_rev',
+    'test_call_stmt2_rev',
+    'test_call_stmt_side_effects',
+    'test_call_stmt_side_effects2',
+    'test_call_stmt_array_rev',
+    'test_chained_calls_rev',
     # # while loop
     # 'test_while_loop_fwd',
     # 'test_while_loop_rev',
@@ -247,6 +247,24 @@ class Homework3Test(unittest.TestCase):
         _dy = ctypes.c_float(0)
         dout = 0.3
         z = lib.rev_func_call_assign(x, ctypes.byref(_dx), y, ctypes.byref(_dy), dout)
+        
+        """LINE BY LINE"""
+        # LINE: z : float = foo(x, y)
+        # then z = 2 * x * y
+        # dx = dout * 2 * y
+        # dy = dout * 2 * x
+        # assert abs(_dx.value - dout * 2 * y) < epsilon and \
+        #     abs(_dy.value - dout * 2 * x) < epsilon
+        
+        # LINE += z = foo(z, y) # x * y * y
+        # then z = 2 * x * y * y
+        # dx = dout * 2 * y * y
+        # dy = dout * 2 * x * 2 * y
+        # assert abs(_dx.value - dout * 2 * y * y) < epsilon, \
+        #     f"_dx.value: {_dx.value}, should be {dout * 2 * y * y}"
+        # assert abs(_dy.value - dout * 2 * x * 2 * y) < epsilon, \
+        #     f"_dy.value: {_dy.value}, should be {dout * 2 * x * 2 * y}"
+        """LINE BY LINE"""
         # z = 2 * x * x * y * y
         # dx = dout * 4 * x * y^2
         # dy = dout * 4 * x^2 * y
