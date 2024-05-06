@@ -294,7 +294,6 @@ _loop_counter_1_tmp : int
         arr, ptr, tmp = loop_counter_vars_map[curr_loop_i]
 
         # _loop_counter_1_tmp = 0 is always regardless of is_inner
-        # BUT do we really need to zero an Int?
         zero_tmp = [ loma_ir.Assign(target=tmp, val=loma_ir.ConstInt(0)) ]
 
         inc_tmp = [loma_ir.Assign(
@@ -629,9 +628,14 @@ while (cond0, max_iter := 50):
             # UPDATE: after forward pass, we have full info about loop counters
             loop_counter_body = declare_loop_counter_vars()
 
+            # If there are 4 loops (in the tree), i=5 after fwd pass
+            # want to begin with 4 and end with -1
+            nonlocal curr_loop_i
+            curr_loop_i -= 1
+
             # backward diff
             rev_new_body = irmutator.flatten( [self.mutate_stmt(stmt) for stmt in reversed(node.body)] )
-            
+
             # UPDATE: tmp adjoint declaration lines at the beginning of rev code,
             # but only can be created after we mutate the body
             tmp_adj_body = self.declare_tmp_adjoints()
@@ -824,10 +828,7 @@ while (_loop_counter_0_tmp > 0, max_iter := 50):
             # To perfect invert this traversal (such that we can index--),
             # we need to traverse in "post-order, right-child-first"
             
-            # First step, i--, but this i doesn't belong to current while
-            # i.e. when there are 9 while(), i=10 before bwd pass
             nonlocal curr_loop_i, curr_parent_iter_size
-            curr_loop_i -= 1
 
             # post-order means we mutate body first
             new_body = [self.mutate_stmt(stmt) for stmt in reversed(node.body)]
@@ -845,6 +846,8 @@ while (_loop_counter_0_tmp > 0, max_iter := 50):
                 max_iter=node.max_iter,
                 body=new_body
             )
+            # Last step, i--
+            curr_loop_i -= 1
 
             return start2 + [big_while]
 

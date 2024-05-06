@@ -430,9 +430,11 @@ class Homework3Test(unittest.TestCase):
         dout = 0.4
         lib.rev_nested_while_loop(x, _dx, n, _dn, dout)
 
-        # out = x + (n * (n-1)) * x^2
-        # dx = dout * (1 + x * (n * (n - 1)))
-        assert abs(_dx.value - dout * (x * (n * (n - 1)))) < epsilon
+        # out = n*(n-1)//2 * x^2
+        # dx = dout * (x * (n * (n - 1)))
+        should_be = dout * (x * (n * (n - 1)))
+        assert abs(_dx.value - dout * (x * (n * (n - 1)))) < epsilon, \
+            f"should_be: {should_be}, got {_dx.value}"
 
     def test_three_level_while_loop_rev(self):
         with open('loma_code/three_level_while_loop_rev.py') as f:
@@ -448,7 +450,9 @@ class Homework3Test(unittest.TestCase):
 
         # out = x + n^3 * x^2
         # dx = dout * (1 + 2 * x * n^3))
-        assert abs(_dx.value - dout * (1 + 2 * x * n * n * n)) < epsilon
+        should_be = dout * (1 + 2 * x * n * n * n)
+        assert abs(_dx.value - dout * (1 + 2 * x * n * n * n)) < epsilon, \
+            f"should_be: {should_be}, got {_dx.value}"
 
     def test_parallel_copy(self):
         with open('loma_code/parallel_copy.py') as f:
