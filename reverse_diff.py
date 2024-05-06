@@ -1158,10 +1158,13 @@ while (_loop_counter_0_tmp > 0, max_iter := 50):
 
             return new_args
 
-        def preprocess_statements(self, stmts: list[loma_ir.stmt]) -> None:
+        def preprocess_statements(self, stmts: list[loma_ir.stmt], num_iter: int = 1) -> None:
             """The only task:
             Add type string (other than 'float' and 'int') of the LHS of an Assign statment,
             which may cause side-effect (assign overwritten), to the assignted_types_str dict.
+
+            NOTE: update for while loop
+            For each occurance in the while loop body, it needs num_iter slots in the cache.
 
             Args:
                 stmts (list[loma_ir.stmt]): primal code list of statements
@@ -1171,15 +1174,17 @@ while (_loop_counter_0_tmp > 0, max_iter := 50):
                     # look at LHS type
                     lhs_type_str = type_to_string(node.target.t)
                     # defaultdict saves the check empty
-                    assignted_types_str[lhs_type_str] += 1
+                    assignted_types_str[lhs_type_str] += 1 * num_iter
                     map_str2type[lhs_type_str] = node.target.t
                 elif isinstance(node, loma_ir.Declare):
-                    # Assign to the declared variable may happen in if/else & loop
                     # look at LHS type
                     lhs_type_str = type_to_string(node.t)
                     # defaultdict saves the check empty
                     assignted_types_str[lhs_type_str] += 1
                     map_str2type[lhs_type_str] = node.t
+                elif isinstance(node, loma_ir.While):
+                    # Assign may happen in loop
+                    self.preprocess_statements(stmts=node.body, num_iter=node.max_iter)
             
             # print(f"CHECK assignted_types_str: {assignted_types_str}")
             return
