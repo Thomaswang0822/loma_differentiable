@@ -162,14 +162,14 @@ def reverse_diff(diff_func_id : str,
             case loma_ir.Float():
                 if overwrite:
                     return [loma_ir.Assign(target, deriv)]
-                    # return [loma_ir.CallStmt(call=loma_ir.Call(
-                    #     'atomic_add',
-                    #     args=[target, deriv],
-                    #     t=target.t
-                    # ))]
                 else:
-                    return [loma_ir.Assign(target,
-                        loma_ir.BinaryOp(loma_ir.Add(), target, deriv))]
+                    return [loma_ir.CallStmt(call=loma_ir.Call(
+                        'atomic_add',
+                        args=[target, deriv],
+                        t=target.t
+                    ))]
+                    # return [loma_ir.Assign(target,
+                    #     loma_ir.BinaryOp(loma_ir.Add(), target, deriv))]
             case loma_ir.Struct():
                 s = target.t
                 stmts = []
@@ -608,8 +608,6 @@ while (cond0, max_iter := 50):
             """
             # BEFORE ALL, normalize call such as f(x+y, 5*z), see
             node: loma_ir.FunctionDef = CallNormalizeMutator().mutate_function_def(primal_node)
-            # for bbb in node.body:
-            #     print(f"CHECK: {bbb}")
             
             # Signature (args)
             new_args = self.process_args(node)
@@ -622,10 +620,10 @@ while (cond0, max_iter := 50):
             statments (ptr++, ptr--, push, pop) """
             stack_body = setup_cache_stmts()
 
-            # copy paste forward code
+            # non-trivially "copy-paste" primal code, see PrimalCodeMutator
             fwd_new_body = irmutator.flatten( [PrimalCodeMutator().mutate_stmt(stmt) for stmt in node.body] )
 
-            # UPDATE: after forward pass, we have full info about loop counters
+            # loop UPDATE: after forward pass, we have full info about loop counters
             loop_counter_body = declare_loop_counter_vars()
 
             # If there are 4 loops (in the tree), i=5 after fwd pass
@@ -633,14 +631,14 @@ while (cond0, max_iter := 50):
             nonlocal curr_loop_i
             curr_loop_i -= 1
 
-            # backward diff
+            # backward pass
             rev_new_body = irmutator.flatten( [self.mutate_stmt(stmt) for stmt in reversed(node.body)] )
 
             # UPDATE: tmp adjoint declaration lines at the beginning of rev code,
             # but only can be created after we mutate the body
             tmp_adj_body = self.declare_tmp_adjoints()
 
-            # put together everything
+            # put together everything in the correct order
             body = stack_body + loop_counter_body + fwd_new_body + tmp_adj_body + rev_new_body
             return loma_ir.FunctionDef(diff_func_id, new_args, body, node.is_simd, ret_type=None)
 
@@ -762,7 +760,23 @@ while (cond0, max_iter := 50):
 
             NOTE:
                 This time, the 12345 steps are done on every Out of primal function.
+            
+            NOTE:
+                Need special handling for atomic_add() here, since it's a void function.
             """
+            # maunally deal with atomic_add(y, x) <=> y = y + x
+            # rev code should be _dx = _dx + _dy <=> atomic_add(_dx, _dy)
+            if isinstance(node.call, loma_ir.Call) and node.call.id == "atomic_add":
+                assert len(node.call.args) == 2
+                y, x = node.call.args
+                dy, dx = self.to_d_expr(y), self.to_d_expr(x)
+                aa_call = loma_ir.Call(
+                    "atomic_add",
+                    [dx, dy],
+                    t=node.call.t
+                )
+                return [loma_ir.CallStmt(aa_call)]
+
             pre, post = [], []
             call_lines = self.mutate_custom_call_bwd(node.call)
 

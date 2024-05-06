@@ -42,9 +42,9 @@ tests_to_run = [
     'test_nested_while_loop_rev',
     'test_three_level_while_loop_rev',
     # # SIMD
-    # 'test_parallel_copy',
-    # 'test_parallel_add',
-    # 'test_parallel_reduce',
+    'test_parallel_copy',
+    'test_parallel_add',
+    'test_parallel_reduce',
 
     'DUMMY END'
 ]
