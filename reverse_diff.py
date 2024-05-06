@@ -53,6 +53,14 @@ def reverse_diff(diff_func_id : str,
     assignted_types_str: dict[str, int] = defaultdict(int)
     # map a str back to its loma_ir representation
     map_str2type: dict[str, loma_ir.type] = {}
+    """For loop"""
+    curr_loop_i: int = 0
+    # outmost loop will have value 1, useful for checking whether outmost
+    parent_iter_sizes: dict[int, int] = defaultdict(int)
+    curr_parent_iter_size: int = 1
+    # storage of tuple(_loop_counter_1_arr, _loop_counter_1_ptr, _loop_counter_1_tmp)
+    # First 2 will be None for outermost loop, need to check when use
+    loop_counter_vars_map: dict[int, tuple[loma_ir.Var, ...]] = defaultdict(tuple)
 
     def setup_cache_stmts() -> list[loma_ir.stmt]:
         """Store stmts and exprs to be used many times in global memory. 
@@ -154,6 +162,11 @@ def reverse_diff(diff_func_id : str,
             case loma_ir.Float():
                 if overwrite:
                     return [loma_ir.Assign(target, deriv)]
+                    # return [loma_ir.CallStmt(call=loma_ir.Call(
+                    #     'atomic_add',
+                    #     args=[target, deriv],
+                    #     t=target.t
+                    # ))]
                 else:
                     return [loma_ir.Assign(target,
                         loma_ir.BinaryOp(loma_ir.Add(), target, deriv))]
@@ -224,6 +237,127 @@ def reverse_diff(diff_func_id : str,
                     out_args_expr.append(arg_expr)
         # print(f"CHECK out_args_expr: {out_args_expr}")
         return out_args_expr
+
+    def store_loop_counter_vars(is_inner: bool):
+        """store to loop_counter_vars_map
+        """
+        arr = loma_ir.Var(
+            f"_loop_counter_{curr_loop_i}",
+            t=loma_ir.Array(t=loma_ir.Int(), static_size=curr_parent_iter_size)
+        ) if is_inner else None
+        ptr = loma_ir.Var(
+            f"_loop_counter_{curr_loop_i}_ptr", 
+            t=loma_ir.Int()
+        ) if is_inner else None
+        tmp = loma_ir.Var(f"_loop_counter_{curr_loop_i}_tmp", t=loma_ir.Int())
+
+        loop_counter_vars_map[curr_loop_i] = (arr, ptr, tmp)
+    
+    def declare_loop_counter_vars() -> list[loma_ir.stmt]:
+        """Generate stmts like these:
+_loop_counter_0_tmp : int
+
+_loop_counter_1 : Array[int, 50]
+_loop_counter_1_ptr : int = 0
+_loop_counter_1_tmp : int
+
+        Returns:
+            list[loma_ir.stmt]
+        """
+        stmts = []
+        for i in range(curr_loop_i):
+            is_inner = bool(parent_iter_sizes[i] > 1)
+            # Grab LHS var
+            arr, ptr, tmp = loop_counter_vars_map[i]
+            if is_inner:
+                assert bool(arr is not None) and bool(ptr is not None)
+                stmts += [
+                    loma_ir.Declare(arr.id, t=arr.t),
+                    loma_ir.Declare(ptr.id, t=loma_ir.Int())
+                ]
+            stmts.append(loma_ir.Declare(tmp.id, t=loma_ir.Int()))
+
+        return stmts
+    
+    def inner_loop_stmt_fwd(is_inner: bool):
+        """Generate 4 (or 2) stmts for while() in fwd pass
+    _loop_counter_1_tmp = 0
+    # while():
+        _loop_counter_1_tmp = _loop_counter_1_tmp + 1
+    _loop_counter_1[_loop_counter_1_ptr] = _loop_counter_1_tmp
+    _loop_counter_1_ptr = _loop_counter_1_ptr + 1
+
+        NOTE:
+            Last 2 only for is_inner
+        """
+        assert curr_loop_i in loop_counter_vars_map, "Haven't store loop_counter_vars"
+        arr, ptr, tmp = loop_counter_vars_map[curr_loop_i]
+
+        # _loop_counter_1_tmp = 0 is always regardless of is_inner
+        # BUT do we really need to zero an Int?
+        zero_tmp = [ loma_ir.Assign(target=tmp, val=loma_ir.ConstInt(0)) ]
+
+        inc_tmp = [loma_ir.Assign(
+            target=tmp, 
+            val=loma_ir.BinaryOp(loma_ir.Add(), tmp, loma_ir.ConstInt(1))
+        )]
+        
+        end2 = [
+            loma_ir.Assign(
+                target=loma_ir.ArrayAccess(
+                    array=arr,
+                    index=ptr,
+                    t=loma_ir.Int()
+                ),
+                val=tmp
+            ),
+            loma_ir.Assign(
+                target=ptr,
+                val=loma_ir.BinaryOp(loma_ir.Add(), ptr, loma_ir.ConstInt(1))
+            )
+        ] if is_inner else []
+        return zero_tmp, inc_tmp, end2
+
+    def inner_loop_stmt_bwd(is_inner: bool):
+        """Generate
+    _loop_counter_1_ptr = _loop_counter_1_ptr - 1
+    _loop_counter_1_tmp = _loop_counter_1[_loop_counter_1_ptr]
+        _loop_counter_1_tmp > 0  # An expr
+        _loop_counter_1_tmp = _loop_counter_1_tmp - 1
+        
+        NOTE:
+            First 2 only for is_inner
+        """
+        # print(f"CHECK curr_loop_i: {curr_loop_i}")
+        # print(f"CHECK loop_counter_vars_map: {loop_counter_vars_map}")
+        assert curr_loop_i in loop_counter_vars_map, "Haven't store loop_counter_vars"
+        arr, ptr, tmp = loop_counter_vars_map[curr_loop_i]
+
+        start2 = [
+            loma_ir.Assign(
+                target=ptr,
+                val=loma_ir.BinaryOp(loma_ir.Sub(), ptr, loma_ir.ConstInt(1))
+            ),
+            loma_ir.Assign(
+                target=tmp,
+                val=loma_ir.ArrayAccess(
+                    array=arr,
+                    index=ptr,
+                    t=loma_ir.Int()
+                )
+            )          
+        ] if is_inner else []
+
+        cond_expr = loma_ir.BinaryOp(loma_ir.Greater(), tmp, loma_ir.ConstInt(0))
+
+        dec_tmp = [loma_ir.Assign(
+            target=tmp, 
+            val=loma_ir.BinaryOp(loma_ir.Sub(), tmp, loma_ir.ConstInt(1))
+        )]
+
+        # list[2 stmts], expr, list[1 stmt]
+        return start2, cond_expr, dec_tmp
+
 
     # A utility class that you can use for HW3.
     # This mutator normalizes each call expression into
@@ -313,23 +447,6 @@ def reverse_diff(diff_func_id : str,
     Add declare of _dx after (existing) declare of x
     """
     class PrimalCodeMutator(irmutator.IRMutator):
-        def mutate_stmt(self, node):
-            match node:
-                case loma_ir.Return():
-                    return self.mutate_return(node)
-                case loma_ir.Declare():
-                    return self.mutate_declare(node)
-                case loma_ir.Assign():
-                    return self.mutate_assign(node)
-                case loma_ir.IfElse():
-                    return super().mutate_ifelse(node)
-                case loma_ir.While():
-                    return []
-                case loma_ir.CallStmt():
-                    return self.mutate_call_stmt(node)
-                case _:
-                    assert False, f'Visitor error: unhandled statement {node}'
-
         def mutate_return(self, node: loma_ir.Return):
             # hide original return
             return []
@@ -399,6 +516,63 @@ def reverse_diff(diff_func_id : str,
 
             return pre + call_lines
 
+        def mutate_while(self, node: loma_ir.While) -> list[loma_ir.stmt]:
+            """Forward Pass should look like:
+_loop_counter_0_tmp = 0
+while (cond0, max_iter := 50):
+    # ...
+    _loop_counter_1_tmp = 0
+    while (cond1, max_iter := 60):
+        # ...
+        _loop_counter_2_tmp = 0
+        while (cond2, max_iter := 70):
+            # ...
+            _loop_counter_2_tmp = _loop_counter_2_tmp + 1
+        # push 2
+        _loop_counter_2[_loop_counter_2_ptr] = _loop_counter_2_tmp
+        _loop_counter_2_ptr = _loop_counter_2_ptr + 1
+        # increment 1
+        _loop_counter_1_tmp = _loop_counter_1_tmp + 1
+    # push 1
+    _loop_counter_1[_loop_counter_1_ptr] = _loop_counter_1_tmp
+    _loop_counter_1_ptr = _loop_counter_1_ptr + 1
+    # increment 0
+    _loop_counter_0_tmp = _loop_counter_0_tmp + 1
+            """
+            nonlocal curr_loop_i, curr_parent_iter_size
+
+            # record parent itersize
+            parent_iter_sizes[curr_loop_i] = curr_parent_iter_size
+            is_inner: bool = bool(curr_parent_iter_size > 1)
+            # And with this size, we can create the 3 (or 1) Var
+            store_loop_counter_vars(is_inner)
+
+            # Create those 3 stmts that sandwich while(), if inner loop
+            zero_tmp, inc_tmp, end2 = inner_loop_stmt_fwd(is_inner)
+            # Must create stmts for "push to counter array" after while() here,
+            # since after mutating body, curr_loop_i is no longer 1
+
+            # before mutate while body, 
+            # propagate max_iter and i++
+            curr_loop_i += 1
+            curr_parent_iter_size *= node.max_iter
+
+            # mutate body
+            # new_cond = self.mutate_expr(node.cond)
+            new_body = [self.mutate_stmt(stmt) for stmt in node.body]
+            new_body = irmutator.flatten(new_body)
+            new_body += inc_tmp
+            big_while: loma_ir.While = loma_ir.While(
+                cond=node.cond,
+                max_iter=node.max_iter,
+                body=new_body
+            )
+
+            # restore curr_parent_iter_size, in case of a sibling while()
+            curr_parent_iter_size //= node.max_iter
+
+            return zero_tmp + [big_while] + end2
+
     # Apply the differentiation.
     class RevDiffMutator(irmutator.IRMutator):
         """ Global class attributes to pass data around
@@ -452,6 +626,9 @@ def reverse_diff(diff_func_id : str,
             # copy paste forward code
             fwd_new_body = irmutator.flatten( [PrimalCodeMutator().mutate_stmt(stmt) for stmt in node.body] )
 
+            # UPDATE: after forward pass, we have full info about loop counters
+            loop_counter_body = declare_loop_counter_vars()
+
             # backward diff
             rev_new_body = irmutator.flatten( [self.mutate_stmt(stmt) for stmt in reversed(node.body)] )
             
@@ -460,7 +637,7 @@ def reverse_diff(diff_func_id : str,
             tmp_adj_body = self.declare_tmp_adjoints()
 
             # put together everything
-            body = stack_body + fwd_new_body + tmp_adj_body + rev_new_body
+            body = stack_body + loop_counter_body + fwd_new_body + tmp_adj_body + rev_new_body
             return loma_ir.FunctionDef(diff_func_id, new_args, body, node.is_simd, ret_type=None)
 
 
@@ -616,9 +793,60 @@ def reverse_diff(diff_func_id : str,
 
             return pre + call_lines + post
 
-        def mutate_while(self, node):
-            # HW3: TODO
-            return super().mutate_while(node)
+        def mutate_while(self, node: loma_ir.While) -> list[loma_ir.stmt]:
+            """Reverse pass should look like:
+while (_loop_counter_0_tmp > 0, max_iter := 50):
+    # body 0
+
+    # pop 1
+    _loop_counter_1_ptr = _loop_counter_1_ptr - 1
+    _loop_counter_1_tmp = _loop_counter_1[_loop_counter_1_ptr]
+    while (_loop_counter_1_tmp > 0, max_iter := 60):
+        # body 1
+
+        # pop 2
+        _loop_counter_2_ptr = _loop_counter_2_ptr - 1
+        _loop_counter_2_tmp = _loop_counter_2[_loop_counter_2_ptr]
+        while (_loop_counter_2_tmp > 0, max_iter := 70):
+            # body 2
+
+            # decrement 2
+            _loop_counter_2_tmp = _loop_counter_2_tmp - 1
+        
+        # decrement 1
+        _loop_counter_1_tmp = _loop_counter_1_tmp - 1
+    
+    # decrement 0
+    _loop_counter_0_tmp = _loop_counter_0_tmp - 1
+            """
+            # NOTE: if we think of nested while as a tree, counter index is
+            # incremented in "pre-order, left-child-first" traveral order
+            # To perfect invert this traversal (such that we can index--),
+            # we need to traverse in "post-order, right-child-first"
+            
+            # First step, i--, but this i doesn't belong to current while
+            # i.e. when there are 9 while(), i=10 before bwd pass
+            nonlocal curr_loop_i, curr_parent_iter_size
+            curr_loop_i -= 1
+
+            # post-order means we mutate body first
+            new_body = [self.mutate_stmt(stmt) for stmt in reversed(node.body)]
+            new_body = irmutator.flatten(new_body)
+
+            # After mutate body (children traversal), current while gets back its index
+            is_inner = bool(parent_iter_sizes[curr_loop_i] > 1)
+            # and we can get those stmts
+            start2, cond_expr, dec_tmp = inner_loop_stmt_bwd(is_inner)
+
+            # reconstruct while
+            new_body += dec_tmp
+            big_while = loma_ir.While(
+                cond=cond_expr,
+                max_iter=node.max_iter,
+                body=new_body
+            )
+
+            return start2 + [big_while]
 
         def mutate_const_float(self, node):
             return []
@@ -800,12 +1028,14 @@ def reverse_diff(diff_func_id : str,
             Returns:
                 list[loma_ir.stmt]
             """
-            if len(node.args) == 0:
-                assert False, "function with no arg shouldn't be here"
+            # if len(node.args) == 0:
+            #     assert False, "function with no arg shouldn't be here"
             stmts = []
             # df/d_expr (e.g. f is log(x*y), expr is x*y)
             df_dexpr: loma_ir.expr = None
             match node.id:
+                case "thread_id":
+                    return []
                 case "sin":
                     df_dexpr = loma_ir.Call("cos", [node.args[0]])   
                 case "cos":

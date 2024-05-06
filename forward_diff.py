@@ -130,20 +130,9 @@ def forward_diff(diff_func_id : str,
             return loma_ir.Assign(target, rhs_expr, lineno = node.lineno)
 
         def mutate_ifelse(self, node: loma_ir.IfElse) -> loma_ir.IfElse:
-            new_cond = self.mutate_expr(node.cond)
-            new_then_stmts = [self.mutate_stmt(stmt) for stmt in node.then_stmts]
-            new_else_stmts = [self.mutate_stmt(stmt) for stmt in node.else_stmts]
-            # Important: mutate_stmt can return a list of statements. We need to flatten the lists.
-            new_then_stmts = irmutator.flatten(new_then_stmts)
-            new_else_stmts = irmutator.flatten(new_else_stmts)
-            return loma_ir.IfElse(
-                new_cond,
-                new_then_stmts,
-                new_else_stmts,
-                lineno = node.lineno)
+            return super().mutate_ifelse(node)
 
         def mutate_while(self, node):
-            # HW3: TODO
             return super().mutate_while(node)
 
         """2.0 -> (2.0, 0.0)
