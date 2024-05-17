@@ -14,7 +14,9 @@ import unittest
 epsilon = 1e-4
 
 # List of test method names to run
+# Turn off the bool flag and
 # comment out function names to skip them
+RUN_ALL_TESTS = True
 tests_to_run = [
     # The start
     'test_identity',
@@ -68,6 +70,8 @@ class CustomTestLoader(unittest.TestLoader):
     def loadTestsFromTestCase(self, testCaseClass):
         # Load all test methods from the specified test case class
         test_suite = super().loadTestsFromTestCase(testCaseClass)
+        if RUN_ALL_TESTS:
+            return test_suite
 
         # Filter out test methods that are in the skip list
         filtered_suite = unittest.TestSuite()
