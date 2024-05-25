@@ -1,5 +1,5 @@
 def integrand_f(x: In[float]) -> float:
-    return 4*x + 5
+    return 4*sin(x) + 5
 
 # "fake" MC integral eval
 # samples are not random, but 0.1 apart
@@ -15,7 +15,7 @@ def IntegralEval(lower: In[float], upper: In[float]) -> float:
     res = res * (upper - lower) / n
     return res
 
-def simple_integral() -> float:
+def simple_integral(a: In[float], b: In[float]) -> float:
     res: float
-    res = IntegralEval(0, 1)
+    res = IntegralEval(a, b)
     return res

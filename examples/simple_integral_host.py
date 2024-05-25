@@ -14,5 +14,6 @@ if __name__ == '__main__':
 
     # integral is 2x*dx from 0 to 1, which should eval to around 1
     # assert abs(lib.simple_integral() - 1.0) < 1e-6
-    res = lib.simple_integral()
+
+    res = lib.simple_integral(5, 7)
     print(f"Integral eval to {res}")
