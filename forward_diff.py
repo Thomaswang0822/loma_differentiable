@@ -129,12 +129,10 @@ def forward_diff(diff_func_id : str,
                 raise TypeError("assigned value has wrong type")
             return loma_ir.Assign(target, rhs_expr, lineno = node.lineno)
 
-        def mutate_ifelse(self, node):
-            # HW3: TODO
+        def mutate_ifelse(self, node: loma_ir.IfElse) -> loma_ir.IfElse:
             return super().mutate_ifelse(node)
 
         def mutate_while(self, node):
-            # HW3: TODO
             return super().mutate_while(node)
 
         """2.0 -> (2.0, 0.0)
@@ -145,7 +143,7 @@ def forward_diff(diff_func_id : str,
         def mutate_const_int(self, node):
             return node, loma_ir.ConstFloat(0.0)
 
-        def mutate_var(self, node):
+        def mutate_var(self, node) -> tuple[loma_ir.expr]:
             if isinstance(node.t, loma_ir.Float):
                 return loma_ir.StructAccess(node, 'val'), loma_ir.StructAccess(node, 'dval')
             elif isinstance(node.t, (loma_ir.Int, loma_ir.Array, loma_ir.Struct,)):
@@ -228,14 +226,54 @@ def forward_diff(diff_func_id : str,
             )
             return val, dval
 
+        def mutate_less(self, node):
+            # don't care about dval during compare
+            lval, rval, _, _ = self.extract_binary_val_dval(node)
+            return loma_ir.BinaryOp(
+                loma_ir.Less(), lval, rval,
+                lineno=node.lineno, t=node.t
+            )
+
+        def mutate_less_equal(self, node):
+            # don't care about dval during compare
+            lval, rval, _, _ = self.extract_binary_val_dval(node)
+            return loma_ir.BinaryOp(
+                loma_ir.LessEqual(), lval, rval,
+                lineno=node.lineno, t=node.t
+            )
+
+        def mutate_greater(self, node):
+            # don't care about dval during compare
+            lval, rval, _, _ = self.extract_binary_val_dval(node)
+            return loma_ir.BinaryOp(
+                loma_ir.Greater(), lval, rval,
+                lineno=node.lineno, t=node.t
+            )
+
+        def mutate_greater_equal(self, node):
+            # don't care about dval during compare
+            lval, rval, _, _ = self.extract_binary_val_dval(node)
+            return loma_ir.BinaryOp(
+                loma_ir.GreaterEqual(), lval, rval,
+                lineno=node.lineno, t=node.t
+            )
+
+        def mutate_equal(self, node):
+            # don't care about dval during compare
+            lval, rval, _, _ = self.extract_binary_val_dval(node)
+            return loma_ir.BinaryOp(
+                loma_ir.Equal(), lval, rval,
+                lineno=node.lineno, t=node.t
+            )
+
         """handle intrinsic function calls (sin, exp, etc.)
         and let others pass by.
         """
-        def mutate_call(self, node):
+        def mutate_call(self, node: loma_ir.Call):
             # these intrinsic functions have at least 1 arg, 
             # (pow has 2) we call it x (and y)
             if len(node.args) == 0:
-                return super().mutate_call(node)
+                return self.mutate_custom_call_fwd(node)
             x_val, x_dval = self.mutate_expr(node.args[0])
             # for returned d_float
             val = loma_ir.Call(node.id, [x_val]) if node.id != "pow" else None
@@ -334,7 +372,7 @@ def forward_diff(diff_func_id : str,
                     dval = loma_ir.ConstFloat(0.0)
                 case _:
                     # non-intrinsic function with >=0 args
-                    return super().mutate_call(node)
+                    return self.mutate_custom_call_fwd(node)
             # return for the intrinsic
             return val, dval
 
@@ -346,5 +384,50 @@ def forward_diff(diff_func_id : str,
             lval, ldval = self.mutate_expr(node.left)
             rval, rdval = self.mutate_expr(node.right)
             return (lval, rval, ldval, rdval)
+
+        def mutate_custom_call_fwd(self, node: loma_ir.Call) -> tuple[loma_ir.expr]:
+            d_func_name = func_to_fwd[node.id]
+            d_ret_type = autodiff.type_to_diff_type(diff_structs, node.t)
+
+            # grab In/Out of the arguments
+            actual_func: loma_ir.FunctionDef = funcs[node.id]
+            inouts: list[loma_ir.inout] = [arg.i for arg in actual_func.args]
+            assert len(inouts) == len(node.args)
+            
+            # process args:
+            # (x, y) -> make__dfloat(x.val, x.dval), make__dfloat(y.val, y.dval)
+            d_args: list[loma_ir.expr] = []
+            for arg_expr, io in zip(node.args, inouts):
+                arg_expr: loma_ir.expr
+                # y shouldn't be make__dfloat(y.val, y.dval) if it's an Out
+                if io == loma_ir.Out():
+                    d_args.append(arg_expr)
+                    continue
+                
+                val, dval = self.mutate_expr(arg_expr)
+                if isinstance(arg_expr.t, loma_ir.Float):
+                    d_args.append(loma_ir.Call(
+                        'make__dfloat', 
+                        [val, dval]
+                    ))
+                elif isinstance(arg_expr.t, (loma_ir.Int, loma_ir.Array, loma_ir.Struct,)):
+                    d_args.append(val)
+                else:
+                    raise TypeError("mutate_var() node.t has wrong type")
+            # create the Call expr:
+            # _d_fwd_foo(make__dfloat(x.val, x.dval), make__dfloat(y.val, y.dval))
+            d_call: loma_ir.Call = loma_ir.Call(
+                d_func_name, d_args,
+                lineno=node.lineno, t=d_ret_type
+            )
+            # if foo(x, y) returns a float, _d_fwd_foo() will return a _dfloat
+            if isinstance(node.t, loma_ir.Float):
+                return loma_ir.StructAccess(d_call, 'val'), loma_ir.StructAccess(d_call, 'dval')
+            elif isinstance(node.t, (loma_ir.Int, loma_ir.Array, loma_ir.Struct,)):
+                return d_call, None
+            # but for foo(x : In[float], y : Out[float]), node.t is None
+            else:
+                # assert False, f"node.t has wrong type: {node.t}"
+                return d_call
 
     return FwdDiffMutator().mutate_function_def(func)
