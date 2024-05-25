@@ -19,38 +19,38 @@ epsilon = 1e-4
 # comment out function names to skip them
 RUN_ALL_TESTS = False
 tests_to_run = [
-    # # if/else
-    # 'test_ifelse_fwd',
-    # 'test_ifelse_rev',
-    # 'test_ifelse_side_effects_rev',
-    # 'test_nested_ifelse_rev',
-    # # function call
-    # 'test_func_call_fwd',
-    # 'test_chained_calls_fwd',
-    # 'test_call_stmt_fwd',
-    # 'test_func_call_rev',
-    # 'test_func_call_rev2',
-    # 'test_func_call_assign_rev',
-    # 'test_call_array_rev',
-    # 'test_call_stmt_rev',
-    # 'test_call_stmt2_rev',
-    # 'test_call_stmt_side_effects',
-    # 'test_call_stmt_side_effects2',
-    # 'test_call_stmt_array_rev',
-    # 'test_chained_calls_rev',
-    # # while loop
-    # 'test_while_loop_fwd',
-    # 'test_while_loop_rev',
-    # 'test_nested_while_loop_rev',
-    # 'test_three_level_while_loop_rev',
-    # # SIMD, ispc backend
-    # 'test_parallel_copy',
-    # 'test_parallel_add',
-    # 'test_parallel_reduce',
+    # if/else
+    'test_ifelse_fwd',
+    'test_ifelse_rev',
+    'test_ifelse_side_effects_rev',
+    'test_nested_ifelse_rev',
+    # function call
+    'test_func_call_fwd',
+    'test_chained_calls_fwd',
+    'test_call_stmt_fwd',
+    'test_func_call_rev',
+    'test_func_call_rev2',
+    'test_func_call_assign_rev',
+    'test_call_array_rev',
+    'test_call_stmt_rev',
+    'test_call_stmt2_rev',
+    'test_call_stmt_side_effects',
+    'test_call_stmt_side_effects2',
+    'test_call_stmt_array_rev',
+    'test_chained_calls_rev',
+    # while loop
+    'test_while_loop_fwd',
+    'test_while_loop_rev',
+    'test_nested_while_loop_rev',
+    'test_three_level_while_loop_rev',
+    # SIMD, ispc backend
+    'test_parallel_copy',
+    'test_parallel_add',
+    'test_parallel_reduce',
     # SIMD, opencl backend
-    # 'test_parallel_copy_opencl',
-    # 'test_parallel_add_opencl',
-    'test_parallel_reduce_opencl',
+    # 'test_parallel_copy_opencl',  # buggy
+    'test_parallel_add_opencl',
+    # 'test_parallel_reduce_opencl',  # buggy
 
     'DUMMY END'
 ]
