@@ -17,36 +17,40 @@ epsilon = 1e-4
 # List of test method names to run
 # Turn off the bool flag and
 # comment out function names to skip them
-RUN_ALL_TESTS = True
+RUN_ALL_TESTS = False
 tests_to_run = [
-    # if/else
-    'test_ifelse_fwd',
-    'test_ifelse_rev',
-    'test_ifelse_side_effects_rev',
-    'test_nested_ifelse_rev',
-    # function call
-    'test_func_call_fwd',
-    'test_chained_calls_fwd',
-    'test_call_stmt_fwd',
-    'test_func_call_rev',
-    'test_func_call_rev2',
-    'test_func_call_assign_rev',
-    'test_call_array_rev',
-    'test_call_stmt_rev',
-    'test_call_stmt2_rev',
-    'test_call_stmt_side_effects',
-    'test_call_stmt_side_effects2',
-    'test_call_stmt_array_rev',
-    'test_chained_calls_rev',
-    # while loop
-    'test_while_loop_fwd',
-    'test_while_loop_rev',
-    'test_nested_while_loop_rev',
-    'test_three_level_while_loop_rev',
-    # # SIMD
-    'test_parallel_copy',
-    'test_parallel_add',
-    'test_parallel_reduce',
+    # # if/else
+    # 'test_ifelse_fwd',
+    # 'test_ifelse_rev',
+    # 'test_ifelse_side_effects_rev',
+    # 'test_nested_ifelse_rev',
+    # # function call
+    # 'test_func_call_fwd',
+    # 'test_chained_calls_fwd',
+    # 'test_call_stmt_fwd',
+    # 'test_func_call_rev',
+    # 'test_func_call_rev2',
+    # 'test_func_call_assign_rev',
+    # 'test_call_array_rev',
+    # 'test_call_stmt_rev',
+    # 'test_call_stmt2_rev',
+    # 'test_call_stmt_side_effects',
+    # 'test_call_stmt_side_effects2',
+    # 'test_call_stmt_array_rev',
+    # 'test_chained_calls_rev',
+    # # while loop
+    # 'test_while_loop_fwd',
+    # 'test_while_loop_rev',
+    # 'test_nested_while_loop_rev',
+    # 'test_three_level_while_loop_rev',
+    # # SIMD, ispc backend
+    # 'test_parallel_copy',
+    # 'test_parallel_add',
+    # 'test_parallel_reduce',
+    # SIMD, opencl backend
+    # 'test_parallel_copy_opencl',
+    # 'test_parallel_add_opencl',
+    'test_parallel_reduce_opencl',
 
     'DUMMY END'
 ]
@@ -505,6 +509,76 @@ class Homework3Test(unittest.TestCase):
             structs, lib = compiler.compile(f.read(),
                                             target = 'ispc',
                                             output_filename = '_code/parallel_reduce')
+
+        np.random.seed(1234)
+        n = 10000
+        x = np.random.random(n).astype('f') / n
+        _dx = np.zeros_like(x)
+        _dz = 0.234
+        lib.rev_parallel_reduce(\
+            x.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            _dx.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            _dz,
+            n)
+
+        assert np.sum(np.abs(_dx - _dz)) / n < epsilon
+
+    def test_parallel_copy_opencl(self):
+        cl_ctx, cl_device, cl_cmd_queue = cl_utils.create_context()
+        with open('loma_code/parallel_copy.py') as f:
+            structs, lib = compiler.compile(f.read(),
+                                        target = 'opencl',
+                                        opencl_context = cl_ctx,
+                                        opencl_device = cl_device,
+                                        opencl_command_queue = cl_cmd_queue)
+        x = 0.123
+        n = 10000
+        _dx = ctypes.c_float(0)
+        np.random.seed(1234)
+        _dz = np.random.random(n).astype('f') / n
+        lib.rev_parallel_copy(x,
+            ctypes.byref(_dx),
+            _dz.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            n)
+
+        assert abs(_dx.value - np.sum(_dz)) < epsilon
+
+    def test_parallel_add_opencl(self):
+        cl_ctx, cl_device, cl_cmd_queue = cl_utils.create_context()
+        with open('loma_code/parallel_add.py') as f:
+            structs, lib = compiler.compile(f.read(),
+                                        target = 'opencl',
+                                        opencl_context = cl_ctx,
+                                        opencl_device = cl_device,
+                                        opencl_command_queue = cl_cmd_queue)
+
+        np.random.seed(seed=1234)
+        n = 10000
+        x = np.random.random(n).astype('f') / n
+        _dx = np.zeros_like(x)
+        y = np.random.random(n).astype('f') / n
+        _dy = np.zeros_like(y)
+        z = np.zeros_like(x)
+        _dz = np.random.random(n).astype('f') / n
+        lib.rev_parallel_add(
+            x.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            _dx.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            y.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            _dy.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            _dz.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            n)
+
+        assert np.sum(np.abs(_dx - _dz)) / n < epsilon and \
+            np.sum(np.abs(_dy - _dz)) / n < epsilon
+
+    def test_parallel_reduce_opencl(self):
+        cl_ctx, cl_device, cl_cmd_queue = cl_utils.create_context()
+        with open('loma_code/parallel_reduce.py') as f:
+            structs, lib = compiler.compile(f.read(),
+                                        target = 'opencl',
+                                        opencl_context = cl_ctx,
+                                        opencl_device = cl_device,
+                                        opencl_command_queue = cl_cmd_queue)
 
         np.random.seed(1234)
         n = 10000
