@@ -50,7 +50,13 @@ def forward_diff(diff_func_id : str,
 
     # Apply the differentiation.
     class FwdDiffMutator(irmutator.IRMutator):
-        def mutate_function_def(self, node):
+        def mutate_function_def(self, node: loma_ir.FunctionDef) -> loma_ir.FunctionDef:
+            if "integrand" in node.id and "pd" in node.id:
+                # if user defines integrand_pd(x, t), it needs special
+                # handle of parametric discontinuity
+                # function-name check is a hack.
+                return self.mutate_integrand_pd_def(node)
+            
             # change all the args to their diff type (float to _dfloat)
             d_args = [
                 loma_ir.Arg(arg.id, 
@@ -385,7 +391,163 @@ def forward_diff(diff_func_id : str,
             rval, rdval = self.mutate_expr(node.right)
             return (lval, rval, ldval, rdval)
 
+        def mutate_integrand_pd_def(self, node: loma_ir.FunctionDef) -> loma_ir.FunctionDef:
+            # Starting from very restrictive
+            assert len(node.args) == 2, "an integrand func with parametric discontinuity must have 2 args"
+            x, arg_t = node.args
+            assert isinstance(x.t, loma_ir.Float), "integration var x must be float"
+            assert isinstance(arg_t.t, loma_ir.Float), "parameter t must be float"
+            assert isinstance(node.ret_type, loma_ir.Float), "integrand must return float"
+            assert isinstance(node.body[0], loma_ir.IfElse), "For now, nothing before if-else"
+
+            # add 2 more args to hold lower and upper
+            new_args = list(node.args) + [
+                loma_ir.Arg("lower", t=loma_ir.Float(), i=loma_ir.In()),
+                loma_ir.Arg("upper", t=loma_ir.Float(), i=loma_ir.In()),
+            ]
+            d_args = [
+                loma_ir.Arg(arg.id, 
+                autodiff.type_to_diff_type(diff_structs, arg.t),
+                arg.i)  # same name, same In/Out, float -> _dfloat
+                for arg in new_args
+            ]
+            # change return to its diff type, just a _dfloat
+            d_ret_type = autodiff.type_to_diff_type(diff_structs, node.ret_type)
+
+            # These Var are all _dfloat, so need to access .val
+            lower = loma_ir.StructAccess(loma_ir.Var("lower"), "val")
+            upper = loma_ir.StructAccess(loma_ir.Var("upper"), "val")
+            param_t = loma_ir.StructAccess(loma_ir.Var(arg_t.id), "val")
+            new_body = []
+            for stmt in node.body:
+                if isinstance(stmt, loma_ir.IfElse):
+                    # primal value pass (compute .val, leave .dval incorrectly)
+                    new_body += self.mutate_discont_val(stmt)
+                    # diff value pass (reparametrize, compute .dval correctly)
+                    new_body += self.mutate_discont_dval(stmt, param_t, lower, upper)
+                else:
+                    new_body += [self.mutate_stmt(stmt)]
+            new_body = irmutator.flatten(new_body)
+            # At last, make the defloat and return
+            correct_val = loma_ir.Var("correct_val", t=loma_ir.Float())
+            correct_dval = loma_ir.Var("correct_dval", t=loma_ir.Float())
+            new_body.append(loma_ir.Return(
+                loma_ir.Call(
+                    "make__dfloat", args=[correct_val, correct_dval])
+            ))
+
+            return loma_ir.FunctionDef(\
+                diff_func_id, d_args, new_body, node.is_simd, d_ret_type, lineno = node.lineno)        
+
+        def mutate_discont_val(self, node: loma_ir.IfElse) -> list[loma_ir.stmt]:
+            # Prepare: assume a single Return under each branch
+            assert len(node.then_stmts) == 1 and isinstance(node.then_stmts[0], loma_ir.Return)
+            assert len(node.else_stmts) == 1 and isinstance(node.else_stmts[0], loma_ir.Return)
+            # These 2 are expr, likely Var
+            ret_then_expr = node.then_stmts[0].val
+            ret_else_expr = node.else_stmts[0].val
+            # Mutated expr (Var), leave dval alone
+            correct_then, _ = self.mutate_expr(ret_then_expr)
+            correct_else, _ = self.mutate_expr(ret_else_expr)
+            dfloat_type = diff_structs['float']
+            stmts = []  # returned
+
+            # Declare the new Var to store .val of return value
+            correct_val = loma_ir.Var("correct_val", t=loma_ir.Float())
+            stmts.append(loma_ir.Declare("correct_val", t=loma_ir.Float()))
+
+            # create a new IfElse. Instead of return, store to correct_val
+            newIE = loma_ir.IfElse(
+                self.mutate_expr(node.cond),
+                then_stmts=[loma_ir.Assign(correct_val, correct_then)],
+                else_stmts=[loma_ir.Assign(correct_val, correct_else)]
+            )
+            stmts.append(newIE)
+
+            return stmts
+
+        def mutate_discont_dval(
+            self, node: loma_ir.IfElse,
+            param_t: loma_ir.Var, lower: loma_ir.Var, upper: loma_ir.Var
+        ) -> list[loma_ir.stmt]:
+            
+            # Prepare: assume a single Return under each branch
+            assert len(node.then_stmts) == 1 and isinstance(node.then_stmts[0], loma_ir.Return)
+            assert len(node.else_stmts) == 1 and isinstance(node.else_stmts[0], loma_ir.Return)
+
+            dfloat_type = diff_structs['float']
+            stmts = []  # returned
+
+            # Declare the new Var to store .dval of return value
+            correct_dval = loma_ir.Var("correct_dval", t=loma_ir.Float())
+            stmts.append(loma_ir.Declare("correct_dval", t=loma_ir.Float()))
+
+            # change condition to: t > lower and t < upper
+            new_cond = loma_ir.BinaryOp(
+                loma_ir.And(),
+                left=loma_ir.BinaryOp(
+                    loma_ir.Less(), left=lower, right=param_t
+                ),  # lower < t
+                right=loma_ir.BinaryOp(
+                    loma_ir.Less(), left=param_t, right=upper
+                )  # t < upper
+            )
+
+            # compute correct dval value
+            correct_then: loma_ir.expr = loma_ir.BinaryOp(
+                loma_ir.Div(),
+                left=loma_ir.ConstFloat(1.0),
+                right=loma_ir.BinaryOp(loma_ir.Sub(), upper, lower),
+                t=loma_ir.Float()
+            )  # mimic dirac delta, see doc
+            correct_else = loma_ir.ConstFloat(0.0)
+
+            # reconstruct if-else
+            newIE = loma_ir.IfElse(
+                new_cond,
+                then_stmts=[loma_ir.Assign(correct_dval, correct_then)],
+                else_stmts=[loma_ir.Assign(correct_dval, correct_else)]
+            )
+            stmts.append(newIE)
+
+            return stmts
+            
+        def mutate_integrand_pd_call(self, node: loma_ir.Call) -> tuple[loma_ir.expr]:
+            """Handle Call to parametric discontinuous integrand func, which happens in IntegralEval()
+            This means call to integrand_pd(curr_x ,t) in primal code will be turned to 
+            fwd_integrand_f(curr_x, t, lower, upper)
+
+            Args:
+                node (loma_ir.Call): _description_
+
+            Returns:
+                tuple[loma_ir.expr]: _description_
+            """
+            # some check first
+            assert len(node.args) == 2, "integrand should have 2 args"
+
+            # add 2 more args, which have fixed name 'lower' and 'upper'
+            dfloat_type = diff_structs['float']
+            lower = loma_ir.Var("lower", t=dfloat_type)
+            upper = loma_ir.Var("upper", t=dfloat_type)
+            d_args = list(node.args) + [lower, upper]
+
+            # function name
+            d_func_name = func_to_fwd[node.id]
+
+            # return
+            d_call: loma_ir.Call = loma_ir.Call(
+                d_func_name, d_args,
+                lineno=node.lineno, t=dfloat_type
+            )
+            return loma_ir.StructAccess(d_call, 'val'), loma_ir.StructAccess(d_call, 'dval')
+        
         def mutate_custom_call_fwd(self, node: loma_ir.Call) -> tuple[loma_ir.expr]:
+            if "integrand" in node.id and "pd" in node.id:
+                # FROM integrand_pd(curr_x, t)
+                # TO _d_fwd_integrand_pd(curr_x, t, lower, upper)
+                return self.mutate_integrand_pd_call(node)
+       
             d_func_name = func_to_fwd[node.id]
             d_ret_type = autodiff.type_to_diff_type(diff_structs, node.t)
 
