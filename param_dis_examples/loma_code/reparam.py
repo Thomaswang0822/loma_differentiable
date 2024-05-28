@@ -1,6 +1,6 @@
 # simply (x<t)? 1:0, float version
 def integrand_pd(x: In[float], t: In[float]) -> float:
-    if (3.0 * x + 0.77) < (0.5 * t + 0.07):
+    if (-3.0 * x + 0.0) > (0.5 * t + 0.0):
         return 1.0
     else:
         return 0.0
