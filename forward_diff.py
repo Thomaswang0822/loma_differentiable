@@ -391,11 +391,167 @@ def forward_diff(diff_func_id : str,
             rval, rdval = self.mutate_expr(node.right)
             return (lval, rval, ldval, rdval)
 
+        def extract_ifelse_condition(self, node: loma_ir.BinaryOp,
+                arg_x: loma_ir.Arg, arg_t: loma_ir.Arg):
+            """Given a general condition in the form
+            (mx + n) > (kt + p), we extract (also make declaration) of these
+            m, n, k, p
+            See report for derivation
+
+            In addition, we return the "ratio" term, which is 
+            -k/m if operator is >; 
+            k/m if operator is <;
+            """
+            WRONG_FORMAT = f"IFElse condition in the integrand must have format (mx + n) [>, <] (kt + p)\n" +\
+                f"Note that x should be on the left and t on the right"
+            PLUS_MINUS = (loma_ir.Add, loma_ir.Sub)
+            assert isinstance(node, loma_ir.BinaryOp)
+            # determine sign of ratio term, explicit check to rule out Sub(), Equal(), etc.
+            gt: bool
+            if isinstance(node.op, (loma_ir.Greater, loma_ir.GreaterEqual)):
+                gt = True
+            elif isinstance(node.op, (loma_ir.Less, loma_ir.LessEqual)):
+                gt = False
+            else:
+                assert False, WRONG_FORMAT
+
+            declare_stmts = []
+
+            # Decode LHS: mx+n, note the case m=1 or n=0
+            LHS = node.left
+            _m, _n = loma_ir.Var("_m", t=loma_ir.Float()), loma_ir.Var("_n", t=loma_ir.Float())
+            _m_expr: loma_ir.expr = None
+            _n_expr: loma_ir.expr = None
+            _minus_n = False
+            if isinstance(LHS, loma_ir.Var):
+                # x
+                assert LHS.id == arg_x.id, WRONG_FORMAT
+                _m_expr = loma_ir.ConstFloat(1.0)
+                _n_expr = loma_ir.ConstFloat(0.0)
+            elif isinstance(LHS, loma_ir.BinaryOp):
+                if isinstance(LHS.op, loma_ir.Mul):
+                    # m*x
+                    assert isinstance(LHS.right, loma_ir.Var) \
+                        and LHS.right.id == arg_x.id, WRONG_FORMAT
+                    _m_expr, _ = self.mutate_expr(LHS.left)
+                    _n_expr = loma_ir.ConstFloat(0.0)
+                elif isinstance(LHS.left, loma_ir.Var) and LHS.left.id == arg_x.id:
+                    # x +/- n
+                    _m_expr = loma_ir.ConstFloat(1.0)
+                    assert isinstance(LHS.op, PLUS_MINUS), WRONG_FORMAT
+                    _minus_n = isinstance(LHS.op, loma_ir.Sub)
+                    _n_expr, _ = self.mutate_expr(LHS.right)
+                elif isinstance(LHS.left.op, loma_ir.Mul):
+                    _mx = LHS.left
+                    # m*x +/- n
+                    assert isinstance(_mx.right, loma_ir.Var) \
+                        and _mx.right.id == arg_x.id, WRONG_FORMAT
+                    _m_expr, _ = self.mutate_expr(_mx.left)
+                    assert isinstance(LHS.op, PLUS_MINUS), WRONG_FORMAT
+                    _minus_n = isinstance(LHS.op, loma_ir.Sub)
+                    _n_expr, _ = self.mutate_expr(LHS.right)
+            else:
+                # something we couldn't or shouldn't handle, like 3.5 > kt+p
+                assert False, WRONG_FORMAT
+            # Add "0.0 - " if necessary
+            if _minus_n:
+                _n_expr = loma_ir.BinaryOp(loma_ir.Sub(), loma_ir.ConstFloat(0.0), _n_expr)
+            # Store Declare()
+            declare_stmts += [
+                loma_ir.Declare(_m.id, t=loma_ir.Float(), val=_m_expr),
+                loma_ir.Declare(_n.id, t=loma_ir.Float(), val=_n_expr)
+            ]
+
+            # Decode RHS: kt + p, note the case k=1 or p=0
+            RHS = node.right
+            _k, _p = loma_ir.Var("_k", t=loma_ir.Float()), loma_ir.Var("_p", t=loma_ir.Float())
+            _k_expr: loma_ir.expr = None
+            _p_expr: loma_ir.expr = None
+            _minus_p = False
+            if isinstance(RHS, loma_ir.Var):
+                # t
+                assert RHS.id == arg_t.id, WRONG_FORMAT
+                _k_expr = loma_ir.ConstFloat(1.0)
+                _p_expr = loma_ir.ConstFloat(0.0)
+            elif isinstance(RHS, loma_ir.BinaryOp):
+                if isinstance(RHS.op, loma_ir.Mul):
+                    # k*t
+                    assert isinstance(RHS.right, loma_ir.Var) \
+                        and RHS.right.id == arg_t.id, WRONG_FORMAT
+                    _k_expr, _ = self.mutate_expr(RHS.left)
+                    _p_expr = loma_ir.ConstFloat(0.0)
+                elif isinstance(RHS.left, loma_ir.Var) and RHS.left.id == arg_t.id:
+                    # t +/- p
+                    _k_expr = loma_ir.ConstFloat(1.0)
+                    assert isinstance(RHS.op, PLUS_MINUS), WRONG_FORMAT
+                    _minus_p = isinstance(RHS.op, loma_ir.Sub)
+                    _p_expr, _ = self.mutate_expr(RHS.right)
+                elif isinstance(RHS.left.op, loma_ir.Mul):
+                    _kt = RHS.left
+                    # k*t +/- p
+                    assert isinstance(_kt.right, loma_ir.Var) \
+                        and _kt.right.id == arg_t.id, WRONG_FORMAT
+                    _k_expr, _ = self.mutate_expr(_kt.left)
+                    assert isinstance(RHS.op, PLUS_MINUS), WRONG_FORMAT
+                    _minus_p = isinstance(RHS.op, loma_ir.Sub)
+                    _p_expr, _ = self.mutate_expr(RHS.right)
+            else:
+                # something we couldn't or shouldn't handle, like 3.5 > kt+p
+                assert False, WRONG_FORMAT
+            # Add "0.0 - " if necessary
+            if _minus_p:
+                _p_expr = loma_ir.BinaryOp(loma_ir.Sub(), loma_ir.ConstFloat(0.0), _p_expr)
+            # Store Declare()
+            declare_stmts += [
+                loma_ir.Declare(_k.id, t=loma_ir.Float(), val=_k_expr),
+                loma_ir.Declare(_p.id, t=loma_ir.Float(), val=_p_expr)
+            ]
+
+            # post process, construct the ratio (-/+)k/m
+            _ratio = loma_ir.Var("_ratio", t=loma_ir.Float())
+            _ratio_expr = loma_ir.BinaryOp(loma_ir.Div(), _k, _m)
+            if gt:
+                _ratio_expr = loma_ir.BinaryOp(loma_ir.Sub(), loma_ir.ConstFloat(0.0), _ratio_expr)
+            declare_stmts.append(loma_ir.Declare(_ratio.id, t=loma_ir.Float(), val=_ratio_expr))
+
+            return declare_stmts, [_m, _n, _k, _p, _ratio]
+
+        def reparam_lower_upper(
+                self, bd: loma_ir.expr, 
+                cond_tmp_Vars: list[loma_ir.Var],
+                param_t: loma_ir.expr
+            ):
+            """Before reparam, lower=a and upper=b;
+            After reparam, lower=R(a) and upper=R(b).
+
+            R(x) = mx - kt + n - p,
+            so here we compute R(bd)
+
+            Args:
+                bd (loma_ir.expr): original bound in float, lower.val or upper.val
+                cond_tmp_Vars (list[loma_ir.Var]): [_m, _n, _k, _p, _ratio]
+                param_t: (loma_ir.expr): t.val
+            """
+            _m, _n, _k, _p, _ratio = cond_tmp_Vars
+            mx_kt = loma_ir.BinaryOp(
+                loma_ir.Sub(),
+                loma_ir.BinaryOp(loma_ir.Mul(), _m, bd),
+                loma_ir.BinaryOp(loma_ir.Mul(), _k, param_t),
+                t=loma_ir.Float()
+            )  # mx - kt
+            return loma_ir.BinaryOp(
+                loma_ir.Add(),
+                left=mx_kt,
+                right=loma_ir.BinaryOp(loma_ir.Sub(), _n, _p),
+                t=loma_ir.Float()
+            )
+
+
         def mutate_integrand_pd_def(self, node: loma_ir.FunctionDef) -> loma_ir.FunctionDef:
             # Starting from very restrictive
             assert len(node.args) == 2, "an integrand func with parametric discontinuity must have 2 args"
-            x, arg_t = node.args
-            assert isinstance(x.t, loma_ir.Float), "integration var x must be float"
+            arg_x, arg_t = node.args
+            assert isinstance(arg_x.t, loma_ir.Float), "integration var x must be float"
             assert isinstance(arg_t.t, loma_ir.Float), "parameter t must be float"
             assert isinstance(node.ret_type, loma_ir.Float), "integrand must return float"
             assert isinstance(node.body[0], loma_ir.IfElse), "For now, nothing before if-else"
@@ -424,7 +580,7 @@ def forward_diff(diff_func_id : str,
                     # primal value pass (compute .val, leave .dval incorrectly)
                     new_body += self.mutate_discont_val(stmt)
                     # diff value pass (reparametrize, compute .dval correctly)
-                    new_body += self.mutate_discont_dval(stmt, param_t, lower, upper)
+                    new_body += self.mutate_discont_dval(stmt, arg_x, arg_t, param_t, lower, upper)
                 else:
                     new_body += [self.mutate_stmt(stmt)]
             new_body = irmutator.flatten(new_body)
@@ -467,7 +623,7 @@ def forward_diff(diff_func_id : str,
             return stmts
 
         def mutate_discont_dval(
-            self, node: loma_ir.IfElse,
+            self, node: loma_ir.IfElse, arg_x: loma_ir.Arg, arg_t: loma_ir.Arg,
             param_t: loma_ir.Var, lower: loma_ir.Var, upper: loma_ir.Var
         ) -> list[loma_ir.stmt]:
             
@@ -482,7 +638,38 @@ def forward_diff(diff_func_id : str,
             correct_dval = loma_ir.Var("correct_dval", t=loma_ir.Float())
             stmts.append(loma_ir.Declare("correct_dval", t=loma_ir.Float()))
 
-            # change condition to: t > lower and t < upper
+            # UPDATE: process condition using reparam
+            cond_stmts, cond_tmp_Vars = self.extract_ifelse_condition(node.cond, arg_x, arg_t)
+            stmts += cond_stmts
+            # and declare R(lower) and R(upper)
+            _R_lower = loma_ir.Var("_R_lower", t=loma_ir.Float())
+            _R_upper = loma_ir.Var("_R_upper", t=loma_ir.Float())
+            stmts += [
+                loma_ir.Declare(
+                    _R_lower.id, 
+                    t=loma_ir.Float(), 
+                    val=self.reparam_lower_upper(lower, cond_tmp_Vars, param_t)
+                ),
+                loma_ir.Declare(
+                    _R_upper.id, 
+                    t=loma_ir.Float(), 
+                    val=self.reparam_lower_upper(upper, cond_tmp_Vars, param_t)
+                )
+            ]
+            # and construct new condition (for derivative computation only)
+            ZERO = loma_ir.ConstFloat(0.0)
+            new_cond = loma_ir.BinaryOp(
+                loma_ir.And(),
+                left=loma_ir.BinaryOp(
+                    loma_ir.Less(), left=_R_lower, right=ZERO
+                ),
+                right=loma_ir.BinaryOp(
+                    loma_ir.Less(), left=ZERO, right=_R_upper
+                )
+            )  # [R(lower) < 0 < R(upper)]
+            
+            
+            """ # change condition to: t > lower and t < upper
             new_cond = loma_ir.BinaryOp(
                 loma_ir.And(),
                 left=loma_ir.BinaryOp(
@@ -491,12 +678,14 @@ def forward_diff(diff_func_id : str,
                 right=loma_ir.BinaryOp(
                     loma_ir.Less(), left=param_t, right=upper
                 )  # t < upper
-            )
+            ) """
 
             # compute correct dval value
+            # UPDATE: after reparam, need to multiply with the _ratio
+            _ratio = cond_tmp_Vars[-1]
             correct_then: loma_ir.expr = loma_ir.BinaryOp(
                 loma_ir.Div(),
-                left=loma_ir.ConstFloat(1.0),
+                left=_ratio,
                 right=loma_ir.BinaryOp(loma_ir.Sub(), upper, lower),
                 t=loma_ir.Float()
             )  # mimic dirac delta, see doc
