@@ -1,11 +1,11 @@
-# simply (x<t)? 1:0, float version
+# indicator [ _m*x+_n {<, >} _k*t+_p ]
 def integrand_pd(x: In[float], t: In[float]) -> float:
-    if (3.0 * x + 0.0) < (0.5 * t + 0.0):
+    if (3.0 * x + 12.4) < (0.5 * t + 5.6):
         return 1.0
     else:
         return 0.0
 
-# Above function should integrated to (t-a)
+
 def IntegralEval(lower: In[float], upper: In[float], t: In[float]) -> float:
     curr_x: float = lower
     n: int = (upper - lower) / 0.01 + 1
@@ -18,5 +18,5 @@ def IntegralEval(lower: In[float], upper: In[float], t: In[float]) -> float:
     res = res * (upper - lower) / n
     return res
 
-# Do a wrong "discretize before differentiate"
+# Do a correct "differentiate before discretize"
 fwd_IntegralEval = fwd_diff(IntegralEval)

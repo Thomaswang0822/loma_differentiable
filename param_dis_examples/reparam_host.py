@@ -14,7 +14,7 @@ from teg.eval.numpy_eval import evaluate
 
 #===========Check loma_code/reparam.py and define here===========
 _m, _k = 3.0, 0.5
-_n, _p = 0.0, 0.0
+_n, _p = 12.4, 5.6
 _op = "<"
 #===========Check loma_code/reparam.py and define here===========
 
@@ -82,17 +82,17 @@ if __name__ == '__main__':
             output_filename = '_code/reparam'
         )
 
-    low, up = 5.0, 7.0
+    low, up = 5.0, 7.0  # they will change Integral but not derivative of Integral
     _dfloat = structs['_dfloat']
     dlow, dup = _dfloat(low, 0.0), _dfloat(up, 0.0)
 
     lhs, rhs = t_should_between(low, up)
-    # choices = [lhs-1.0, lhs + (rhs - lhs) * float(rand()), rhs+1.0]
-    choices = [lhs-1.0, 34.0 * (1 if _k * _m > 0 else -1), rhs+1.0]
+    choices = [lhs-1.0, lhs + (rhs - lhs) * float(rand()), rhs+1.0]
+    # choices = [lhs-1.0, (lhs+rhs)/2, rhs+1.0]  # debug use: set _n, _p = 0
 
-    print(f"We take integral from low={low} to up={up}")
-    print(f"integrand is indicator [{_m}*x+{_n} {_op} {_k}*t+{_p}]")
-    print(f"And t should produce non-zero integral value and derivative when [{lhs} < t < {rhs}]")
+    print(f"*****DOUBLE CHECK integrand_pd in loma_code***** [{_m}*x+{_n} {_op} {_k}*t+{_p}]")
+    print(f"We take integral from low={low} to up={up}", \
+        f" and expect non-zero derivative when [{lhs:.3f} < t < {rhs:.3f}]")
 
     for _t in choices:
         val, dval = correct_val_dval(_t)
