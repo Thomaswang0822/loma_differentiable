@@ -61,4 +61,70 @@ With this, the final reparameterization result is:
 
 $$\frac{d}{dt} \int_{a}^{b} [mx + n > kt + p] \,dx = -\frac{k}{|m|} [mR(a) < 0 < mR(b)]$$
 
+### step 1 validation
+
+Test code for validating the implementation upto this step can be found in `param_dis_examples\reparam_host.py`
+
 ## Step 2: Indicator to General Discontinuous Integrands
+
+Now we come to the easy part. The goal is to compute an integrand function like this:
+
+```python
+def integrand_pd(x: In[float], t: In[float]) -> float:
+    if (3.0 * x + 12.4) < (0.5 * t + 5.6):
+        return -11.0
+    else:
+        return -1.0
+```
+
+We borrow C syntax to better illustrate the differenece. In Step 1, the indicator integrand `[m*x+n > k*t+p]` can also be written as
+
+```c
+(m*x+n > k*t+p)? 1.0 : 0.0
+```
+
+In this Step 2, it becomes
+
+```c
+(m*x+n > k*t+p)? ret_if : ret_else
+```
+
+where **ret_if** and **ret_else** are expressions (not necessarily constant numbers) not depending on **x** or **t**.
+
+The key takeaway is that switching from `1.0 : 0.0` to `ret_if : ret_else` doesn't introduce any difference in the boundary condition. Thus, those tedious processing steps for boundary conditions can remain unchanged. It only introduces changes in the final value of integral and its derivative.
+
+The integral value will be computed correctly without changing any code, because again, parametric discontinuities only become a problem after one tries to differentiate the integral.
+
+The derivative of integral value is correct after we multiply the "final reparameterization result" with **(ret_if - ret_else)**. Namely,
+
+$$-\frac{k}{|m|} (ret_{if} - ret_{else}) \cdot [mR(a) < 0 < mR(b)]$$
+
+### proof of correctness
+
+Instead of going through another rigorous algebraic derivation, we'd like to give an informal proof with an example. This could bring more intuitions for understanding the entire problem.
+
+Nevertheless, one must pay special attention when rewriting the general if-else integrand into combination of indicators and applying the product rule. Specifically, `(m*x+n > k*t+p)? ret_if : ret_else` is NOT equivalent to `[m*x+n > k*t+p] * (ret_if - ret_else)`. Doing this will give you wrong integral value. The mathematically equivalent expression is `[m*x+n > k*t+p] * ret_if + [not (m*x+n > k*t+p)] * ret_else`.
+
+Though our implementation only works for 1d integral, we can consider an example where the integral is over some arbitrary domain - let's say a disk on which people throw darts. The disk has 2 regions, and people get different scores depending on whether the dart is within distance **t** to the disk center. We can express this idea with a function like:
+
+```python
+def score_integrand_pd(loc_x: In[float], dist_t: In[float]) -> float:
+    if loc_x < dist_t:
+        # in good region
+        return good_score
+    else:
+        # in bad region
+        return bad_score
+```
+
+After we inject real meanings to these abstract symbols/expressions, we know the integral, from **loc_x=a** to **loc_x=b** wrt. area measure, represents score-weighted area of a ring with inner radius and outer radius a and b, respectively. Also, note here we use the "simplest" condition that doesn't requires reparameterization. This isolates the changes and difficulties associated to reparameterization.
+
+Now we figure out the meaning of the derivative (wrt. **dist_t**) of the above integral. It represents "how and at what rate does the score-weighted area change if we increase **dist_t** a tiny bit.
+
+And immediately we know that the score-weighted area will not change if the ring is completely inside "good region" or completely inside "bad region".
+
+When this ring overlaps the boundary of good region and bad region, there will be a change. Suppose **dist_t** increases by an infenitesimal value $\varDelta t$, then the score assigned on that infenitesimally thin disk (or we can say circle) goes from bad score to good score. And this difference in score under area measure is exactly the change rate of score-weighted area.
+
+### step 2 validation
+
+Test code for validating the implementation upto this step can be found in `param_dis_examples\more_reparam_host.py`
