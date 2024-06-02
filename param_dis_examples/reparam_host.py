@@ -98,5 +98,5 @@ if __name__ == '__main__':
         val, dval = correct_val_dval(_t)
         df_t = _dfloat(_t, 1.0)
         res = lib.fwd_IntegralEval(dlow, dup, df_t)
-        print(f"With t={_t:.3f}, Integral is {res.val:.3f}, expect {val:.3f} "
+        print(f"With t={_t:.3f}, Integral is {res.val:.3f}, expect {val:.3f}; "
             f"derivative is {res.dval:.3f}, expect {dval:.3f}")
