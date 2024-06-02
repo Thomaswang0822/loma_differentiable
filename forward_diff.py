@@ -685,26 +685,34 @@ def forward_diff(diff_func_id : str,
                     loma_ir.Less(), left=ZERO, right=upper_reparam
                 )
             )  # [m*R(lower) < 0 < m*R(upper)]
-            
-            
-            """ # change condition to: t > lower and t < upper
-            new_cond = loma_ir.BinaryOp(
-                loma_ir.And(),
-                left=loma_ir.BinaryOp(
-                    loma_ir.Less(), left=lower, right=param_t
-                ),  # lower < t
-                right=loma_ir.BinaryOp(
-                    loma_ir.Less(), left=param_t, right=upper
-                )  # t < upper
-            ) """
 
             # compute correct dval value
-            # UPDATE: after reparam, need to multiply with the _ratio
+            # UPDATE1: after reparam, need to multiply with the _ratio
             _ratio = cond_tmp_Vars[-1]
+            # UPDATE2: generalize (cond ? 1 : 0) to (cond ? ret_if : ret_else)
+            # first, we throw the "divide by (upper-lower)" into _ratio
+            stmts.append(loma_ir.Assign(
+                target=loma_ir.Var("_ratio", t=loma_ir.Float()),
+                val=loma_ir.BinaryOp(
+                    loma_ir.Div(),
+                    left=_ratio,
+                    right=loma_ir.BinaryOp(loma_ir.Sub(), upper, lower),
+                    t=loma_ir.Float()
+                )
+            ))  # _ratio = _ratio / (upper - lower)
+            # Then we get ret_if and ret_else; what we want is their diff
+            _ret_if, _ = self.mutate_expr(node.then_stmts[0].val)
+            _ret_else, _ = self.mutate_expr(node.else_stmts[0].val)
+            # and declare this diff
+            stmts.append(loma_ir.Declare(
+                target="_ret_diff",
+                t=loma_ir.Float(),
+                val=loma_ir.BinaryOp(loma_ir.Sub(), _ret_if, _ret_else)
+            ))
             correct_then: loma_ir.expr = loma_ir.BinaryOp(
-                loma_ir.Div(),
+                loma_ir.Mul(),
                 left=_ratio,
-                right=loma_ir.BinaryOp(loma_ir.Sub(), upper, lower),
+                right=loma_ir.Var("_ret_diff"),
                 t=loma_ir.Float()
             )  # mimic dirac delta, see doc
             correct_else = loma_ir.ConstFloat(0.0)
