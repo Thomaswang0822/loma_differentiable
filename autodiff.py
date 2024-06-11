@@ -223,6 +223,7 @@ class CallFuncVisitor(irvisitor.IRVisitor):
             node.id == 'pow' or \
             node.id == 'exp' or \
             node.id == 'log' or \
+            node.id == "abs" or \
             node.id == 'int2float' or \
             node.id == 'float2int' or \
             node.id == 'thread_id' or \

@@ -44,7 +44,7 @@ Here are some assumptions we made at the current stage. We will relax some of th
 - Everything is in float
 - Single variable (1D) integral
 - Derivatives won't be taken wrt. lower and upper. In practice, loma will compute them, but we don't guarantee the correctness.
-- There will only be "simple" IfElse condition. This means we only consider **if x < t** but not **if (x-5) > (7-t)**. General conditions will be resolved by reparameterization, the next step of the project.
+- There will only be "simple" If-Else condition. This means we only consider **if x < t** but not **if (x-5) > (7-t)**. General conditions will be resolved by reparameterization, the next step of the project.
 - Both `then_stmts` and `else_stmts` will only have a single Return statement. This maybe relaxed depending on the difficulty and time.
 - `else_stmts` will return 0.0, otherwise the integrand is no longer a indicator function. This will also be dealt after we have reparameterization.
 
@@ -83,7 +83,7 @@ def integrand_pd(x: In[float], t: In[float]) -> float:
         return 0.0
 ```
 
-When the integrand doens't have a discountinuous parameter (no IfElse), there isn't any special treatment. The integrand is just a custom function call. See *param_dis_examples\loma_code\simple_d_integral.py*
+When the integrand doens't have a discountinuous parameter (no If-Else), there isn't any special treatment. The integrand is just a custom function call. See *param_dis_examples\loma_code\simple_d_integral.py*
 
 When there is a discontinuity, however, we need 2 things:
 
@@ -111,7 +111,7 @@ def _d_fwd_integrand_pd(x : In[_dfloat], t : In[_dfloat], lower : In[_dfloat], u
         return make__dfloat(correct_val,correct_dval)
 ```
 
-The only thing worth notice is the `correct_dval = 1.0 / (upper.val - lower.val)` instead of `correct_dval = 1.0`. 
+The only thing worth notice is the `correct_dval = 1.0 / (upper.val - lower.val)` instead of `correct_dval = 1.0`.
 
 The high-level idea is, the derivative of a indicator function is a Dirac Delta, which is non-trivial to represent or handle
 in the existing loma infrastructure. Fortunately, Dirac Delta is only a by-product under our "differentiate then discretize/integrate" framework. We integrate this Dirac Delta signal over **t** and get the **[lower < t < upper]**.

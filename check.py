@@ -265,6 +265,7 @@ def check_call_in_call_stmt(node : loma_ir.func,
                 node.id == 'sqrt' or \
                 node.id == 'exp' or \
                 node.id == 'log' or \
+                node.id == "abs" or \
                 node.id == 'int2float' or \
                 node.id == 'float2int' or \
                 node.id == 'pow' or \

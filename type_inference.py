@@ -252,6 +252,7 @@ class TypeInferencer(irmutator.IRMutator):
                 call.id == 'cos' or \
                 call.id == 'sqrt' or \
                 call.id == 'exp' or \
+                call.id == 'abs' or \
                 call.id == 'log':
             if len(args) != 1:
                 raise error.CallTypeMismatch(call)
