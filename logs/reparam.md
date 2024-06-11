@@ -6,7 +6,7 @@ Those 3 properties in Eq.2 in the paper are fundamental to all derivation below.
 
 ## Step 1: Boundary Condition
 
-In the previous step, we only consider "very simple" If-Else condition like **if x < t**. We will relax this restriction first. We'd like to handle an integrand like this correctly:
+In the previous step, we only consider "very simple" If-Else condition like **if x < t**. We will relax this restriction first. We'd like to handle an integrand in such general form correctly:
 
 ```python
 def integrand_pd(x: In[float], t: In[float]) -> float:
@@ -16,8 +16,7 @@ def integrand_pd(x: In[float], t: In[float]) -> float:
         return 0.0
 ```
 
-The boundary condition refers to "when does the derivative-of-integral hold nonzero value?" For the simple example, it's **[0 < t < 1]**. Now it becomes a more difficult question for the compiler to answer before it
-calculates the derviative value.
+The boundary condition refers to "when does the derivative-of-integral hold nonzero value?" For the simple example, it's **[0 < t < 1]**. Now it becomes a more difficult question for the compiler (us) to answer with some algebraic derivation.
 
 ### preprocess
 
@@ -26,6 +25,7 @@ The loma compiler will preprocess such that the condition has the general form `
 1. the condition itself must be a BinaryOp(), whose op is among `>, >=, <, <=`
 2. the lhs expression must have x and be linear in x
 3. the rhs expression must have t and be linear in t
+4. `m, n, k, p` should not contain `x` and `t`, but can be more complicated expressions other than constant floats.
 
 Besides extracting coefficients, the other goal is to turn the op into **> or >=**.
 The compiler will simply negate (add a minus sign) to all 4 coefficients when it sees **< or <=**, which is mathematically equivalent. This saves trouble in the next steps.
@@ -41,7 +41,7 @@ We adopt the notation from the paper. Namely, the "continuous expression" inside
 
 $$mx-kt+n-p = c(x,t) = R(x)$$
 
-Note that **R(x)** is the same thing but emphasizes more on "reparameterziation" and "wrt. x". Also, $\frac{\partial}{\partial t} c(x,t) = -k$ and $\frac{\partial}{\partial x} R(x) = m$
+Note that **R(x)** is the same function/expression but emphasizes more on "reparameterziation" and "wrt. x". Also, $\frac{\partial}{\partial t} c(x,t) = -k$ and $\frac{\partial}{\partial x} R(x) = m$
 
 $$ \frac{d}{dt} \int_{a}^{b} [mx + n > kt + p] \,dx $$
 $$ = \int_{a}^{b} \frac{d}{dt} [c(x,t) > 0] \,dx $$
@@ -55,7 +55,7 @@ We omit the last step which should, according to the third rule of Eq 2 in the p
 
 With our specific setting, when m < 0, **R(x)** is an decreasing function of x and **R(a) > R(b)**. By the Calculus fact $\int_{a}^{b} f(x) \,dx = -\int_{b}^{a} f(x) \,dx$, when m < 0, the integral of Dirac Delta should be `-1 * [R(b) < 0 < R(a)]`
 
-The loma compiler can easily multiply any expression by this **-1**, but couldn't tell the sign of underlying value of **m** because it's only known at runtime. Thus, we have a workaround. We observe that no matter m>0 or m<0, `[m * R(a) < 0 < m * R(a)]` is a correct equavalent indicator. And the extra **-1** can be combined with $\frac{-k}{m}$ by changing it to $\frac{-k}{|m|}$. In this way, the compiler doesn't have to add extra if-else statement to check the sign of **m** and modify any expressions at runtime.
+The loma compiler can easily multiply any expression by this **-1**, but couldn't tell the sign of underlying value of **m** because it's only known at runtime (note Rule 4 above). Thus, we have a workaround. We observe that no matter m>0 or m<0, `[m * R(a) < 0 < m * R(a)]` is a correct equivalent indicator. And the extra **-1** can be combined with $\frac{-k}{m}$ by changing it to $\frac{-k}{|m|}$. In this way, the compiler doesn't have to add extra If-Else statement to check the sign of **m** and modify any expressions at runtime.
 
 With this, the final reparameterization result is:
 
@@ -123,7 +123,11 @@ Now we figure out the meaning of the derivative (wrt. **dist_t**) of the above i
 
 And immediately we know that the score-weighted area will not change if the ring is completely inside "good region" or completely inside "bad region".
 
-When this ring overlaps the boundary of good region and bad region, there will be a change. Suppose **dist_t** increases by an infenitesimal value $\varDelta t$, then the score assigned on that infenitesimally thin disk (or we can say circle) goes from bad score to good score. And this difference in score under area measure is exactly the change rate of score-weighted area.
+When this ring overlaps the boundary of good region and bad region, there will be a change. Suppose **dist_t** increases by an infenitesimal value $\varDelta t$, then the score assigned on that infenitesimally thin ring (or we can say circle) goes from bad score to good score. And this difference in score under area measure is exactly the change rate of score-weighted area.
+
+Here is the illustration:
+
+![disk example](disk_example.jpg)
 
 ### step 2 validation
 
