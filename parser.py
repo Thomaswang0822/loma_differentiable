@@ -372,8 +372,114 @@ def parse(code : str) -> tuple[dict[str, loma_ir.Struct], dict[str, loma_ir.func
         if isinstance(d, ast.FunctionDef):
             f = visit_FunctionDef(d)
             funcs[f.id] = f
+            if "integrand" in f.id:
+                eval_id = f.id.replace('integrand', 'eval')
+                print(f"Found a integrand function: {f.id},", 
+                    f"will auto create its eval function {eval_id}")
+                funcs[eval_id] = integrand_eval_converter(f)
+            # print(f"parser.parse line 375, CHECK f.id: {f.id}")
         elif isinstance(d, ast.Assign):
             f = visit_Differentiate(d)
             funcs[f.id] = f
 
     return structs, funcs
+
+def integrand_eval_converter(f: loma_ir.FunctionDef) -> loma_ir.FunctionDef:
+    """Given a integrand function (user defined), "manually" construct its eval function
+    e.g. integrand_pd1(...) -> eval_pd1(lower, upper, ...)
+
+    The actual definition should look like:
+    
+    def IntegralEval(lower: In[float], upper: In[float], t: In[float]) -> float:
+        curr_x: float = lower
+        n: int = (upper - lower) / 0.01 + 1
+        i: int = 0
+        res: float = 0.0
+        while (i < n, max_iter := 10000):
+            res = res + integrand_pd(curr_x, t)
+            i = i + 1
+            curr_x = curr_x + 0.01
+        res = res * (upper - lower) / n
+        return res
+
+    Args:
+        f (loma_ir.FunctionDef): integrand_pd1(x, t)
+
+    Returns:
+        loma_ir.FunctionDef: eval_pd1(lower, upper, t)
+    """
+    # function name
+    _id = f.id.replace('integrand', 'eval')
+
+    # args: we assume the first arg to be the integration variable
+    _args = [
+        loma_ir.Arg("lower", t=loma_ir.Float(), i=loma_ir.In()),
+        loma_ir.Arg("upper", t=loma_ir.Float(), i=loma_ir.In())
+    ]
+    _args += f.args[1:]
+    
+    # prepare some variables to construct body
+    lower = loma_ir.Var("lower", t=loma_ir.Float())
+    upper = loma_ir.Var("upper", t=loma_ir.Float())
+    upper_minus_lower = loma_ir.BinaryOp(loma_ir.Sub(), upper, lower)
+    curr_x = loma_ir.Var("curr_x", t=loma_ir.Float())
+    n = loma_ir.Var("n", t=loma_ir.Int())
+    i = loma_ir.Var("i", t=loma_ir.Int())
+    res = loma_ir.Var("res", t=loma_ir.Float())
+
+    # body
+    _body = [
+        loma_ir.Declare("curr_x", t=loma_ir.Float(), val=lower),
+        loma_ir.Declare("n", t=loma_ir.Int(), val=loma_ir.BinaryOp(
+            loma_ir.Add(), 
+            left=loma_ir.BinaryOp(
+                loma_ir.Div(),
+                left=upper_minus_lower,
+                right=loma_ir.ConstFloat(0.01),
+                t=loma_ir.Float()
+            ),
+            right=loma_ir.ConstInt(1),
+            t=loma_ir.Int()
+        )),  # n: int = (upper - lower) / 0.01 + 1
+        loma_ir.Declare("i", t=loma_ir.Int(), val=loma_ir.ConstInt(0)),
+        loma_ir.Declare("res", t=loma_ir.Float(), val=loma_ir.ConstFloat(0.0))
+    ]  # the first 4 declarations
+    # construct while loop
+    _call_args: list[loma_ir.expr] = [curr_x] + [loma_ir.Var(arg.id) for arg in f.args[1:]]
+    _while_stmt = [
+        loma_ir.Assign(
+            res,
+            loma_ir.BinaryOp(
+                loma_ir.Add(),
+                left=res,
+                right=loma_ir.Call(f.id, _call_args, t=loma_ir.Float())
+            )
+        ),  # res = res + integrand_pd(curr_x, t)
+        loma_ir.Assign(i, loma_ir.BinaryOp(loma_ir.Add(), left=i, right=loma_ir.ConstInt(1))),
+        loma_ir.Assign(curr_x, loma_ir.BinaryOp(loma_ir.Add(), left=curr_x, right=loma_ir.ConstFloat(0.01))),
+    ]
+    _body.append(loma_ir.While(
+        cond=loma_ir.BinaryOp(loma_ir.Less(), left=i, right=n),
+        max_iter=10000,
+        body=_while_stmt
+    ))
+    _body += [
+        loma_ir.Assign(
+            target=res,
+            val=loma_ir.BinaryOp(
+                loma_ir.Div(),
+                left=loma_ir.BinaryOp(loma_ir.Mul(), left=res, right=upper_minus_lower),
+                right=n,
+                t=loma_ir.Float()
+            )
+        ),  # res = res * (upper - lower) / n
+        loma_ir.Return(val=res)
+    ]
+
+    return loma_ir.FunctionDef(
+        id=_id,
+        args=_args,
+        body=_body,
+        is_simd=f.is_simd,
+        ret_type=loma_ir.Float()
+    )

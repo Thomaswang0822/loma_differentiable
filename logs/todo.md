@@ -1,7 +1,8 @@
 # TODOs to finish up the project
 
 1. Move IntegralEval() from user code to compiler auto-generated code.
-   - current attempt: let compiler/parser note the existence of a `integrand_xxx(...)` fucntion, and automatically inject the "definition" of `Eval_integrand_xxx(lower, upper, ...)`
+   - [x] current attempt: let compiler/parser note the existence of a `integrand_xxx(...)` fucntion, and automatically inject the "definition" of `eval_xxx(lower, upper, ...)`
+   - [x] UPDATE: attempt is successful, both compiling and evaluation are correct.
 2. An application
    - something 1D (we only support 1D integral)
    - look at the paper for inspiration
