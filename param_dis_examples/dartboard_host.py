@@ -17,7 +17,7 @@ from teg.eval.numpy_eval import evaluate
 
 
 """Application idea:
-On a diskboard of radius RADIUS, there is a parameter t with 0<t<RADIUS.
+On a dartboardboard of radius RADIUS, there is a parameter t with 0<t<RADIUS.
 If the dart is closer than t (from the center), you get a good score;
 otherwise, you get a bad score.
 We don't care about the case where the dart doesn't land on the board.

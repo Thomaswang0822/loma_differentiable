@@ -105,7 +105,7 @@ Instead of going through another rigorous algebraic derivation, we'd like to giv
 
 Nevertheless, one must pay special attention when rewriting the general if-else integrand into combination of indicators and applying the product rule. Specifically, `(m*x+n > k*t+p)? ret_if : ret_else` is NOT equivalent to `[m*x+n > k*t+p] * (ret_if - ret_else)`. Doing this will give you wrong integral value. The mathematically equivalent expression is `[m*x+n > k*t+p] * ret_if + [not (m*x+n > k*t+p)] * ret_else`.
 
-Though our implementation only works for 1d integral, we can consider an example where the integral is over some arbitrary domain - let's say a disk on which people throw darts. The disk has 2 regions, and people get different scores depending on whether the dart is within distance **t** to the disk center. We can express this idea with a function like:
+Though our implementation only works for 1d integral, we can consider an example where the integral is over some arbitrary domain - let's say a dartboard on which people throw darts. The dartboard has 2 regions, and people get different scores depending on whether the dart is within distance **t** to the dartboard center. We can express this idea with a function like:
 
 ```python
 def score_integrand_pd(loc_x: In[float], dist_t: In[float]) -> float:
@@ -127,7 +127,7 @@ When this ring overlaps the boundary of good region and bad region, there will b
 
 Here is the illustration:
 
-![disk example](disk_example.jpg)
+![dartboard example](dartboard_example.jpg)
 
 ### step 2 validation
 
