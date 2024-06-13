@@ -4,9 +4,11 @@
    - [x] current attempt: let compiler/parser note the existence of a `integrand_xxx(...)` fucntion, and automatically inject the "definition" of `eval_xxx(lower, upper, ...)`
    - [x] UPDATE: attempt is successful, both compiling and evaluation are correct.
 2. An application
-   - something 1D (we only support 1D integral)
-   - look at the paper for inspiration
+   - [x] something 1D (we only support 1D integral)
+   - [x] look at the paper for inspiration
+   - [x] UPDATE: apps in Teg look doable, but not compilable. Code in teg_applications are not updated.
    - better have an visualization (look at how Tzu-Mao uses Matplotlib)
+   - [ ] correct the mis-usage of "disk"; it should be "dartboard".
 3. Combine those logs and do partial rewrite to make it a project report.
    - write about IntegralEval() internal representation, also briefly explain why some other options are impossible or much harder to implement
    - write about application

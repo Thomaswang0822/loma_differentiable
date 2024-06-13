@@ -13,10 +13,10 @@ from teg.eval.numpy_eval import evaluate
 
 
 if __name__ == '__main__':
-    with open('loma_code/dart_disk.py') as f:
+    with open('loma_code/dartboard.py') as f:
         structs, lib = compiler.compile(
             f.read(),
             target = 'c',
-            output_filename = '_code/dart_disk'
+            output_filename = '_code/dartboard'
         )
     print("********COMPILED SUCCESSFULLY********")
