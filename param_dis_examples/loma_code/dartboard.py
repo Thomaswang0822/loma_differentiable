@@ -1,8 +1,8 @@
 def score_integrand_pd(loc_x: In[float], dist_t: In[float]) -> float:
     if loc_x < dist_t:
-        return 10.0  # in good (high-score) region
+        return 8.0  # in good (high-score) region
     else:
-        return 3.0  # in bad (low-score) region
+        return 1.0  # in bad (low-score) region
 
 
 fwd_score_integrand_pd = fwd_diff(score_integrand_pd)
@@ -24,8 +24,9 @@ def good_bad_diff(radius: In[float], curr_t: In[float]) -> float:
     zero: float = 0.0
     total_area: float = score_eval_pd(zero, radius, curr_t) * 6.283
     # manually compute area of high-score region
-    good_area: float = 3.1415 * curr_t * curr_t
-    area_diff: float = total_area - 2 * good_area
+    good_area: float = 3.1415 * curr_t * curr_t * 8.0
+    # effectively good - bad
+    area_diff: float = 2.0 * good_area - total_area
     return area_diff
 
 fwd_good_bad_diff = fwd_diff(good_bad_diff)
