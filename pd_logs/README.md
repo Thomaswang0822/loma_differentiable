@@ -152,7 +152,7 @@ Here are some assumptions we made at the current stage. We will relax some of th
 
 #### integral eval caller
 
-First, the **IntegralEval** function will be renamed moved to the compiler [later](#compiler-generated-integral-eval-code). For now, we still make it user-generated for more explicitness. It's a
+First, the **IntegralEval** function will be renamed and moved to the compiler [later](#compiler-generated-integral-eval-code). For now, we still make it user-generated for more explicitness. It's a
 general-purpose caller that evaluates the integral, nothing special than a Riemann Sum that places samples evenly in [a, b].
 
 ```python
@@ -268,20 +268,20 @@ Note that **R(x)** is the same function/expression but emphasizes more on "repar
 ``` math
 \begin{matrix}
 
-\frac{d}{dt} \int_{a}^{b} [mx + n > kt + p] \,dx \\\\
-= \int_{a}^{b} \frac{d}{dt} [c(x,t) > 0] \,dx \\\\
-= \int_{a}^{b} \delta(c(x,t)) \cdot \frac{\partial}{\partial t} c(x,t)\,dx \\\\
-= -k \int_{a}^{b} \delta(c(x,t)) \,dx \\\\
-= -k \int_{a}^{b} \delta(R(x)) \,dx \\\\
-= - \frac{k}{\frac{\partial}{\partial x} R(x)} \int_{a}^{b} \delta(R(x)) \cdot \frac{\partial}{\partial x} R(x)\,dx \\\\
-= - \frac{k}{m} \int_{R(a)}^{R(b)} \delta(u) \,du
+\frac{d}{dt} \int_{a}^{b} [mx + n > kt + p] \space dx \\\\
+= \int_{a}^{b} \frac{d}{dt} [c(x,t) > 0] \space dx \\\\
+= \int_{a}^{b} \delta(c(x,t)) \cdot \frac{\partial}{\partial t} c(x,t)\space dx \\\\
+= -k \int_{a}^{b} \delta(c(x,t)) \space dx \\\\
+= -k \int_{a}^{b} \delta(R(x)) \space dx \\\\
+= - \frac{k}{\frac{\partial}{\partial x} R(x)} \int_{a}^{b} \delta(R(x)) \cdot \frac{\partial}{\partial x} R(x)\space dx \\\\
+= - \frac{k}{m} \int_{R(a)}^{R(b)} \delta(u) \space du
 
 \end{matrix}
 ```
 
 We omit the last step which should, according to the third rule of Eq 2 in the paper, turn the integral of Dirac Delta $\delta(u)$ into `[R(a) < 0 < R(b)]`, because there is a caveat. It's legit to assume users will call **IntegralEval()** in the normal order of lower limit and upper limit: **a < b**. But this order no longer holds after they are reparametrized to **R(a)** and **R(b)**.
 
-With our specific setting, when $m < 0$, **R(x)** is a decreasing function of x and **R(a) > R(b)**. By the Calculus fact $\int_{a}^{b} f(x) \,dx = -\int_{b}^{a} f(x) \,dx$, when $m < 0$, the integral of Dirac Delta should be `-1 * [R(b) < 0 < R(a)]`
+With our specific setting, when $m < 0$, **R(x)** is a decreasing function of x and **R(a) > R(b)**. By the Calculus fact $\int_{a}^{b} f(x) \space dx = -\int_{b}^{a} f(x) \space dx$, when $m < 0$, the integral of Dirac Delta should be `-1 * [R(b) < 0 < R(a)]`
 
 The loma compiler can easily multiply any expression by this **-1**, but it couldn't tell the sign of underlying value of **m** because it's only known at runtime (note Rule No.4 above). Thus, we have a workaround.
 
@@ -289,11 +289,11 @@ We observe that no matter $m>0$ or $m<0$, `[m * R(a) < 0 < m * R(a)]` is a corre
 
 With this, the final reparameterization result is:
 
-$$\frac{d}{dt} \int_{a}^{b} [mx + n > kt + p] \,dx = -\frac{k}{|m|} [mR(a) < 0 < mR(b)]$$
+$$\frac{d}{dt} \int_{a}^{b} [mx + n > kt + p] \space dx = -\frac{k}{|m|} [mR(a) < 0 < mR(b)]$$
 
 ### validation of Step 1
 
-Test code for validating the implementation upto this step can be found in [reparam.py](../param_dis_examples/loma_code/reparam.py) and its [driver code](../param_dis_examples/reparam_host.py)
+Test code for validating the implementation up to this step can be found in [reparam.py](../param_dis_examples/loma_code/reparam.py) and its [driver code](../param_dis_examples/reparam_host.py)
 
 ### Step 2: Indicator to General Discontinuous Integrands
 
@@ -364,17 +364,17 @@ Here is the illustration:
 
 #### validation of Step 2
 
-Test code for validating the implementation upto this step can be found in [more_reparam.py](../param_dis_examples/loma_code/more_reparam.py) and its [driver code](../param_dis_examples/more_reparam_host.py)
+Test code for validating the implementation up to this step can be found in [more_reparam.py](../param_dis_examples/loma_code/more_reparam.py) and its [driver code](../param_dis_examples/more_reparam_host.py)
 
 ## Compiler-generated Integral Eval Code
 
-After everything is correctly implemented, we rename the **IntegralEval()** function and move it to the compiler. This means when users defines an integrand called **integrand_pd_f1()**, they can directly call **eval_pd_f1()**. The renaming simply takes the integrand function name and replaces "integrand" with "eval".
+After everything is correctly implemented, we rename the **IntegralEval()** function and move it to the compiler. This means when users define an integrand called **integrand_pd_f1()**, they can directly call **eval_pd_f1()**. The renaming simply takes the integrand function name and replaces "integrand" with "eval".
 
 The implementation of this part isn't difficult. We just translate loma code to compiler code that constructs a `FunctionDef` IR.
 
 Note that users still need to define the forward auto-diff version of the integral evaluation with `fwd_eval_pd_f1 = fwd_diff(eval_pd_f1)`, if they ever need to call the auto-diff integral evaluation directly.
 
-Test code for validating the implementation upto this step can be found in [no_eval.py](../param_dis_examples/loma_code/no_eval.py) and its [driver code](../param_dis_examples/no_eval_host.py)
+Test code for validating the implementation up to this step can be found in [no_eval.py](../param_dis_examples/loma_code/no_eval.py) and its [driver code](../param_dis_examples/no_eval_host.py)
 
 ## Program and Visualize the Motivating Example
 
