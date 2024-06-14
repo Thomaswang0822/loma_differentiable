@@ -11,7 +11,7 @@
    - [x] better have an visualization (look at how Tzu-Mao uses Matplotlib)
    - [x] correct the mis-usage of "disk"; it should be "dartboard".
 3. Combine those logs and do partial rewrite to make it a project report.
-   - [ ] write about IntegralEval() internal representation, also briefly explain why some other options are impossible or much harder to implement
-   - [ ] write about application
-   - [ ] turn some informal formula in the first 2 logs into formal LaTex
-   - [ ] make sure LaTex get rendered correctly in the pdf
+   - [x] write about IntegralEval() internal representation, also briefly explain why some other options are impossible or much harder to implement
+   - [x] write about application
+   - [x] turn some informal formula in the first 2 logs into formal LaTex
+   - [ ] make sure LaTex get rendered correctly on Github

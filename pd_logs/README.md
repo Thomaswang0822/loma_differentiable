@@ -4,18 +4,18 @@
 
 "Systematically differentiating parametric discontinuity" can be translated as "differentiating an integral of if-else (piecewise integrand function) correctly."
 
-The SIGGRAPH paper "Systematically Differentiating Parametric Discontinuity" [Bangaru et al. 2021] provide all ideas, technical details, and regiours proof of correctness of this project. We will refer it as "the paper" throughout this report. [Teg](https://github.com/ChezJrk/Teg) is their research artifact, a compiler with full features.
+The SIGGRAPH paper "Systematically Differentiating Parametric Discontinuity" [Bangaru et al. 2021] provide all ideas, technical details, and rigorous proof of correctness of this project. We will refer it as "the paper" throughout this report. [Teg](https://github.com/ChezJrk/Teg) is their research artifact, a compiler with full features.
 
 The goal of the project is to implement some basic ideas of Teg in [loma](https://github.com/BachiLi/loma_public/), an education compiler with limited language features.
 
 ## Choices of Representing Integral in Loma
 
-The first step is to setup loma infrastructure to handle an integral. This means that something like $\int_{x=0}^{\pi/2} cos(x)+5$
+The first step is to set up loma infrastructure to handle an integral. This means that something like $\int_{x=0}^{\pi/2} cos(x)+5$
 should be evaluated to a numerically correct value.
 
 I explored the following options and chose the custom function representation (option 3).
 
-### Option 1: Intermediate Rrepresentation (IR)
+### Option 1: Intermediate Representation (IR)
 
 This means adding something like
 
@@ -26,7 +26,7 @@ IntegralEval(expr a, expr b, expr integrand, expr wrt)
 to that super long string in **ir.py**, which defines the ASDL (Abstract-Type and Scheme-Definition Language) grammar and in turn the generated loma grammar. This sounds very promising and is the first option I attempted, I found it very difficult, if not impossible, to implement.
 In short, letting Python ADT (Abstract Data Type) to recognize **Integral**, as a new data type is hard.
 
-This part in homework0 writeup could be more explanatory:
+This part in homework0 write-up could be more explanatory:
 > ... loma is embedded in Python. That is, we borrow the Python syntax (but not the semantics), so that we can reuse Python’s parser, and we can exploit on people’s familiarity of Python’s syntax.
 
 Python doesn't have its built-in syntax designed for **Integral**. Unless I did some very fundamental change, inevitably Python parser will treat the **Integral** as a Class or Function. Editing Python library files introduces
@@ -49,9 +49,9 @@ def eval_integral(a: In[float], b: In[float], integral: In[Integral]) -> float:
 
 It has several issues:
 
-- No matter how restricted our *Integral* is (1d, float only, etc.), the integrand must be a **loma_ir.expr** instead of **loma_ir.Var**. In other words, we shouldn't only support $\int_{x=0}^{\pi/2} x$. Something as simple as $\int_{x=0}^{\pi/2} cos(x)+5$ must be supported at least. And this posts serious questions on how to represent **integrand** or what type it should be. Using **float** is wrong, as just explained. Mathmatically, the integrand (for 1d at least) should actually be a function *f(x)*
-- A loma Struct (**Class Integral** in the above python syntax) can only has data members but not member functions. This is a language-specific limitation, and it limits us to give "function property" to the **integrand** member.
-- Think one step ahead, after the Integral infrastucture has been set, we take derivative. But what is the meaning of a differential struct, class **_dIntegral**? What about its "diff type" members? Doesn't really make sense.
+- No matter how restricted our *Integral* is (1d, float only, etc.), the integrand must be a **loma_ir.expr** instead of **loma_ir.Var**. In other words, we shouldn't only support $\int_{x=0}^{\pi/2} x$. Something as simple as $\int_{x=0}^{\pi/2} cos(x)+5$ must be supported at least. And this posts serious questions on how to represent **integrand** or what type it should be. Using **float** is wrong, as just explained. Mathematically, the integrand (for 1d at least) should actually be a function *f(x)*
+- A loma Struct (**Class Integral** in the above python syntax) can only have data members but not member functions. This is a language-specific limitation, and it limits us to give "function property" to the **integrand** member.
+- Think one step ahead, after the Integral infrastructure has been set, we take derivative. But what is the meaning of a differential struct, class **_dIntegral**? What about its "diff type" members? Doesn't really make sense.
 
 ### Option 3: Custom Function
 
@@ -78,7 +78,7 @@ def IntegralEval(lower: In[float], upper: In[float]) -> float:
 
 Note that loma users need to define N copies of **integrand_f()** and its
 corresponding **IntegralEval()** if they
-need evaluate integral on N different functions, and this is a common case.
+need to evaluate integral on N different functions, and this is a common case.
 
 Using a universal **IntegralEval()** for all user-defined integrand functions is not feasible, because loma doesn't support function as argument and enabling it will introduce too much work.
 
@@ -89,7 +89,7 @@ The biggest advantage is the ease of compiler implementation. Everything is buil
 
 which is arguably not too bad.
 
-Even better, later we managed to let the compiler to automatically generate those integral evaluation functions. This means when users define a **integrand_f**, they can use its evaluation function **eval_f** directly.
+Even better, later we managed to let the compiler to automatically generate those integral evaluation functions. This means when users define an **integrand_f**, they can use its evaluation function **eval_f** directly.
 For more details on this part, [see this section](#compiler-generated-integral-eval-code).
 
 ## System Design: Handle Parametric Discontinuity
@@ -101,7 +101,7 @@ $f(x) = [x < t]$.
 
 ### Notations
 
-Each concept could have more than one name/alias and notation/symbol accross different places. We provide a reference list first before discussing technical details.
+Each concept could have more than one name/alias and notation/symbol across different places. We provide a reference list first before discussing technical details.
 
 - integrand: $f(x), f(x, t), [x < t]$
 - integral: $\int_{x=a}^{b} f(x)$
@@ -152,7 +152,7 @@ Here are some assumptions we made at the current stage. We will relax some of th
 
 #### integral eval caller
 
-First, the **IntegralEval** function will be renamed moved to the compiler [later](#compiler-generated-integral-eval-code). For now, we still make it user-generated for more explicity. It's a
+First, the **IntegralEval** function will be renamed moved to the compiler [later](#compiler-generated-integral-eval-code). For now, we still make it user-generated for more explicitness. It's a
 general-purpose caller that evaluates the integral, nothing special than a Riemann Sum that places samples evenly in [a, b].
 
 ```python
@@ -169,7 +169,7 @@ def IntegralEval(lower: In[float], upper: In[float], t: In[float]) -> float:
     return res
 ```
 
-After being prepended to the actual user code, its foward-diff version will be derived by the loma auto-diff pipeline.
+After being prepended to the actual user code, its forward-diff version will be derived by the loma auto-diff pipeline.
 
 #### integrands
 
@@ -183,7 +183,7 @@ def integrand_pd(x: In[float], t: In[float]) -> float:
         return 0.0
 ```
 
-When the integrand doesn't have a discountinuous parameter (no if-else), there isn't any special treatment. The integrand is just a custom function call. See [simple_d_integral.py](../param_dis_examples/loma_code/simple_d_integral.py) and [its driver code](../param_dis_examples/simple_d_integral_host.py)
+When the integrand doesn't have a discontinuous parameter (no if-else), there isn't any special treatment. The integrand is just a custom function call. See [simple_d_integral.py](../param_dis_examples/loma_code/simple_d_integral.py) and [its driver code](../param_dis_examples/simple_d_integral_host.py)
 
 When there is a discontinuity, however, we need 2 things:
 
@@ -213,11 +213,11 @@ def _d_fwd_integrand_pd(x : In[_dfloat], t : In[_dfloat], lower : In[_dfloat], u
 
 The only thing worth notice is the `correct_dval = 1.0 / (upper.val - lower.val)` instead of `correct_dval = 1.0`.
 
-The high-level idea is, the derivative of a indicator function is a Dirac Delta, which is non-trivial to represent or handle
+The high-level idea is, the derivative of an indicator function is a Dirac Delta, which is non-trivial to represent or handle
 in the existing loma infrastructure. Fortunately, Dirac Delta is only a by-product under our "differentiate then discretize/integrate" framework. We integrate this Dirac Delta signal over $x$ and get the **[lower < t < upper]**.
 
 Thus, we aim to produce the correct final result **[lower < t < upper]** only.
-Geometrically, a 1D Dirac Delta signal is a rectangle infinitesimally thin and infinitely tall, but has area-under-curve 1. Under the current "simple" condition without reparameterization, it's equivalent to the area of a rectangle with width=`(upper-lower)` and height=`1/(upper-lower)`. Due to the Riemann Sum nature of our integral evaludation, the "height" in the code becomes `correct_dval = 1.0 / (upper.val - lower.val)`.
+Geometrically, a 1D Dirac Delta signal is a rectangle infinitesimally thin and infinitely tall, but has area-under-curve 1. Under the current "simple" condition without reparameterization, it's equivalent to the area of a rectangle with width=`(upper-lower)` and height=`1/(upper-lower)`. Due to the Riemann Sum nature of our integral evaluation, the "height" in the code becomes `correct_dval = 1.0 / (upper.val - lower.val)`.
 
 ## Reparameterization
 
@@ -237,7 +237,7 @@ def integrand_pd(x: In[float], t: In[float]) -> float:
         return 0.0
 ```
 
-The boundary condition refers to "when does the derivative-of-integral hold nonzero value?" For the simple example, it's **[0 < t < 1]**. Now it becomes a more difficult question that requires some algebraic derivation for the compiler (us) to answer .
+The boundary condition refers to "when does the derivative-of-integral hold nonzero value"? For the simple example, it's **[0 < t < 1]**. Now it becomes a more difficult question that requires some algebraic derivation for the compiler (us) to answer.
 
 #### preprocess
 
@@ -251,7 +251,7 @@ The loma compiler will preprocess such that the condition has the general form $
 Besides extracting coefficients, the other goal is to turn the op into **> or >=**.
 The compiler will simply negate (add a minus sign) to all 4 coefficients when it sees **< or <=**, which is mathematically equivalent. This saves trouble in the next steps.
 
-And the preprocess task can handle all of the special cases arised when
+And the preprocess task can handle all the special cases when
 `m = 1 || k = 1 || n = 0 || p == 0`. This means users can write `if 3.0 * x < t + 5.6` naturally instead of `if (3.0 * x + 0.0) < (1.0 * t + 5.6)`.
 
 #### derive the reparameterization in the general form
@@ -274,9 +274,9 @@ $$ = - \frac{k}{m} \int_{R(a)}^{R(b)} \delta(u) \,du $$
 
 We omit the last step which should, according to the third rule of Eq 2 in the paper, turn the integral of Dirac Delta $\delta(u)$ into `[R(a) < 0 < R(b)]`, because there is a caveat. It's legit to assume users will call **IntegralEval()** in the normal order of lower limit and upper limit: **a < b**. But this order no longer holds after they are reparametrized to **R(a)** and **R(b)**.
 
-With our specific setting, when $m < 0$, **R(x)** is an decreasing function of x and **R(a) > R(b)**. By the Calculus fact $\int_{a}^{b} f(x) \,dx = -\int_{b}^{a} f(x) \,dx$, when $m < 0$, the integral of Dirac Delta should be `-1 * [R(b) < 0 < R(a)]`
+With our specific setting, when $m < 0$, **R(x)** is a decreasing function of x and **R(a) > R(b)**. By the Calculus fact $\int_{a}^{b} f(x) \,dx = -\int_{b}^{a} f(x) \,dx$, when $m < 0$, the integral of Dirac Delta should be `-1 * [R(b) < 0 < R(a)]`
 
-The loma compiler can easily multiply any expression by this **-1**, but it couldn't tell the sign of underlying value of **m** because it's only known at runtime (note Rule No.4 above). Thus, we have a workaround. 
+The loma compiler can easily multiply any expression by this **-1**, but it couldn't tell the sign of underlying value of **m** because it's only known at runtime (note Rule No.4 above). Thus, we have a workaround.
 
 We observe that no matter $m>0$ or $m<0$, `[m * R(a) < 0 < m * R(a)]` is a correct equivalent indicator. And the extra **-1** can be combined with $\frac{-k}{m}$ by changing it to $\frac{-k}{|m|}$, because it should be $(m > 0)? \frac{-k}{m} : \frac{-k}{-m}$. In this way, the compiler doesn't have to add extra if-else statement to check the sign of **m** and modify any expressions at runtime.
 
@@ -340,10 +340,10 @@ def score_integrand_pd(loc_x: In[float], dist_t: In[float]) -> float:
         return bad_score
 ```
 
-After we inject real meanings to these abstract symbols/expressions, we know the integral, from **loc_x=a** to **loc_x=b** wrt. area measure, represents score-weighted area of a ring with inner radius and outer radius a and b, respectively. Also, note here we use the "simplest" condition that doesn't requires reparameterization. This isolates the changes and difficulties associated to reparameterization.
+After we inject real meanings to these abstract symbols/expressions, we know the integral, from **loc_x=a** to **loc_x=b** wrt. area measure, represents score-weighted area of a ring with inner radius and outer radius a and b, respectively. Also, note here we use the "simplest" condition that doesn't require reparameterization. This isolates the changes and difficulties associated to reparameterization.
 
-Now we figure out the meaning of the derivative-of-integral (wrt. **dist_t**) of the above function. It represents "how and at what rate does the score-weighted radius change if we increase **dist_t** a tiny bit.
-Then score-weighted area is simply score-weighted radius mutiplied with $2\pi$.
+Now we figure out the meaning of the derivative-of-integral (wrt. **dist_t**) of the above function. It represents "how and at what rate does the score-weighted radius change if we increase **dist_t** a tiny bit?"
+Then score-weighted area is simply score-weighted radius multiplied with $2\pi$.
 
 $$\text{Area of a circle} =\pi R^2 = 2\pi \int_{x=0}^{R} x$$
 
