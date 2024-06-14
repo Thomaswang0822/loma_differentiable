@@ -264,13 +264,20 @@ $$mx-kt+n-p = c(x,t) = R(x)$$
 
 Note that **R(x)** is the same function/expression but emphasizes more on "reparameterziation" and "wrt. x". Also, $\frac{\partial}{\partial t} c(x,t) = -k$ and $\frac{\partial}{\partial x} R(x) = m$
 
-$$ \frac{d}{dt} \int_{a}^{b} [mx + n > kt + p] \,dx \\\\\\
-= \int_{a}^{b} \frac{d}{dt} [c(x,t) > 0] \,dx \\\\\\
-= \int_{a}^{b} \delta(c(x,t)) \cdot \frac{\partial}{\partial t} c(x,t)\,dx \\\\\\
-= -k \int_{a}^{b} \delta(c(x,t)) \,dx \\\\\\
-= -k \int_{a}^{b} \delta(R(x)) \,dx \\\\\\
-= - \frac{k}{\frac{\partial}{\partial x} R(x)} \int_{a}^{b} \delta(R(x)) \cdot \frac{\partial}{\partial x} R(x)\,dx \\\\\\
-= - \frac{k}{m} \int_{R(a)}^{R(b)} \delta(u) \,du $$
+<!-- Try this: https://stackoverflow.com/a/77727151 -->
+``` math
+\begin{matrix}
+
+\frac{d}{dt} \int_{a}^{b} [mx + n > kt + p] \,dx \\\\
+= \int_{a}^{b} \frac{d}{dt} [c(x,t) > 0] \,dx \\\\
+= \int_{a}^{b} \delta(c(x,t)) \cdot \frac{\partial}{\partial t} c(x,t)\,dx \\\\
+= -k \int_{a}^{b} \delta(c(x,t)) \,dx \\\\
+= -k \int_{a}^{b} \delta(R(x)) \,dx \\\\
+= - \frac{k}{\frac{\partial}{\partial x} R(x)} \int_{a}^{b} \delta(R(x)) \cdot \frac{\partial}{\partial x} R(x)\,dx \\\\
+= - \frac{k}{m} \int_{R(a)}^{R(b)} \delta(u) \,du
+
+\end{matrix}
+```
 
 We omit the last step which should, according to the third rule of Eq 2 in the paper, turn the integral of Dirac Delta $\delta(u)$ into `[R(a) < 0 < R(b)]`, because there is a caveat. It's legit to assume users will call **IntegralEval()** in the normal order of lower limit and upper limit: **a < b**. But this order no longer holds after they are reparametrized to **R(a)** and **R(b)**.
 
