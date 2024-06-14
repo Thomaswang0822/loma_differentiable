@@ -113,8 +113,8 @@ Each concept could have more than one name/alias and notation/symbol across diff
 - integration variable: $x$, $dx$
 - (discontinuous) parameter: $t$
 - parametric discontinuity: pd, PD, if-else
-- simplest indicator integrand: $[x<t]$, `(x<t)? 1.0 : 0.0`
-- indicator integrand: $[mx+n > kt+p]$, `(mx+n > kt+p)? 1.0 : 0.0`; here $m, n, k, p$ are assumed to be constants.
+- simplest indicator integrand: $[x \lt t]$, `(x<t)? 1.0 : 0.0`
+- indicator integrand: $[mx+n \gt kt+p]$, `(mx+n > kt+p)? 1.0 : 0.0`; here $m, n, k, p$ are assumed to be constants.
 - general PD integrand: `(mx+n > kt+p)? then_value : else_value`
 
 ### Goal
@@ -124,7 +124,7 @@ Related files are
 - driver code: [ind_host.py](../param_dis_examples/ind_host.py)
 - loma code: [ind.py](../param_dis_examples/loma_code/ind.py)
 
-We want to compute $\frac{d}{dt} \int_{x=a}^{b} [x<t]$, which
+We want to compute $\frac{d}{dt} \int_{x=a}^{b} [x \lt t]$, which
 should be evaluated to $[a < 0 < b]$. See the paper for details.
 
 Using the setup in the driver code ($a=5, b=7$), we expect

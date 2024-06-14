@@ -14,4 +14,5 @@
    - [x] write about IntegralEval() internal representation, also briefly explain why some other options are impossible or much harder to implement
    - [x] write about application
    - [x] turn some informal formula in the first 2 logs into formal LaTex
-   - [ ] make sure LaTex get rendered correctly on Github
+   - [x] make sure LaTex get rendered correctly on Github
+   - [ ] merge to branch parametric_discontinuity.
