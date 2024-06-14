@@ -15,4 +15,4 @@
    - [x] write about application
    - [x] turn some informal formula in the first 2 logs into formal LaTex
    - [x] make sure LaTex get rendered correctly on Github
-   - [ ] merge to branch parametric_discontinuity.
+   - [x] merge to branch parametric_discontinuity.
