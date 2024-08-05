@@ -386,7 +386,10 @@ The loma code and application code are in [dartboard.py](../param_dis_examples/l
 
 In the loma code, the function **good_bad_diff** computes (good area - bad area) using the given $t$. Its auto-diff function **fwd_good_bad_diff** computes the $dt$ to update $t$ in the gradient descent optimization in the application code.
 
-The visualization can be found in [dartboard.mp4](../param_dis_examples/dartboard.mp4)
+Here is the visualization:
+
+https://github.com/user-attachments/assets/33240a2b-c576-4fbd-9c8c-77dc860d20d9
+
 
 ### failed attempt on a more interesting application
 
